@@ -1,4 +1,4 @@
-package com.example.linter.fsrs
+package com.example.linter.data.fsrs
 
 import io.objectbox.annotation.Entity
 import io.objectbox.annotation.Id

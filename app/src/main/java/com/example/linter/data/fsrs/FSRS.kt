@@ -1,10 +1,7 @@
-package com.example.linter.fsrs
+package com.example.linter.data.fsrs
 
 import android.annotation.SuppressLint
-import com.example.linter.fsrs.Rating
-import com.example.linter.fsrs.CardPhase
-import com.example.linter.fsrs.FlashCard
-import com.example.linter.fsrs.Grade
+import androidx.compose.ui.graphics.Color
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.floor
@@ -29,10 +26,10 @@ class FSRS(
     private val enableFuzz = true
 
     // Временно используем заглушки для цветов (замените на ваши реальные цвета)
-    private val colorEasy = androidx.compose.ui.graphics.Color.Blue.hashCode()
-    private val colorGood = androidx.compose.ui.graphics.Color.Green.hashCode()
-    private val colorHard = androidx.compose.ui.graphics.Color.Magenta.hashCode()
-    private val colorAgain = androidx.compose.ui.graphics.Color.Red.hashCode()
+    private val colorEasy = Color.Blue.hashCode()
+    private val colorGood = Color.Green.hashCode()
+    private val colorHard = Color.Magenta.hashCode()
+    private val colorAgain = Color.Red.hashCode()
 
     var gradeList = mutableListOf(
         Grade(
