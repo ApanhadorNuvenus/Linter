@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.linter.presentation.ui.components.PaginatedLectureText
 import com.example.linter.presentation.ui.components.WordPopup
@@ -28,16 +27,24 @@ fun LectureDetailScreen(
             } else {
                 PaginatedLectureText(
                     text = uiState.text,
+                    tokens = uiState.tokens,
                     wordMetadata = uiState.wordMeta,
+                    phraseRanges = uiState.phraseRanges,
+                    selectionRange = uiState.selectionRange,
                     modifier = Modifier.fillMaxSize(),
-                    onWordClick = { word -> viewModel.onWordClicked(word) }
+                    onWordClick = { offset -> viewModel.onWordClicked(offset) },
+                    onSelectionStart = { offset -> viewModel.onSelectionStart(offset) },
+                    onSelectionDrag = { offset -> viewModel.onSelectionDrag(offset) },
+                    onSelectionEnd = { viewModel.onSelectionEnd() },
+                    onClearSelection = { viewModel.clearSelection() }
                 )
             }
         }
+
         if (uiState.popupWord != null) {
             WordPopup(
                 word = uiState.popupWord!!,
-                translation = uiState.popupTranslation ?: "",
+                translation = uiState.popupTranslation ?: "Загрузка...",
                 familiarity = uiState.popupFamiliarity,
                 onFamiliarityChange = { viewModel.changeFamiliarity(uiState.popupWord!!, it) },
                 onDismiss = { viewModel.dismissPopup() }

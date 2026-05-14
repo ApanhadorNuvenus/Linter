@@ -17,7 +17,6 @@ class WordRepositoryImpl(
 
     override suspend fun addWordsIfNotExist(words: List<String>) {
         val uniqueWords = words.map { it.lowercase() }.distinct()
-        // For String properties, we need to query individually since `in` only works for Long/Int arrays
         val existingEntities = mutableListOf<WordEntity>()
         for (word in uniqueWords) {
             wordBox.query(WordEntity_.word.equal(word)).build().findFirst()?.let {
@@ -31,7 +30,7 @@ class WordRepositoryImpl(
         }
     }
 
-    override suspend fun getTranslation(word: String, sourceLang: String, targetLang: String): String {
+    override suspend fun getTranslation(word: String, sourceLang: String, targetLang: String, saveToDb: Boolean): String {
         val normalized = word.lowercase()
         val entity = wordBox.query(WordEntity_.word.equal(normalized)).build().findFirst()
         if (entity != null && entity.translation != null) {
@@ -39,9 +38,14 @@ class WordRepositoryImpl(
         }
         val result = translator.translate(word, sourceLang, targetLang)
         val translation = result.getOrElse { "Ошибка" }
-        val toSave = entity ?: WordEntity(word = normalized)
-        toSave.translation = translation
-        wordBox.put(toSave)
+
+        // Сохраняем в БД только если это слово, или если юзер нажал "Учу" (тогда флаг saveToDb = true)
+        if (saveToDb) {
+            val toSave = entity ?: WordEntity(word = normalized)
+            toSave.translation = translation
+            wordBox.put(toSave)
+        }
+
         return translation
     }
 
@@ -75,8 +79,17 @@ class WordRepositoryImpl(
     override suspend fun getTranslationMap(words: List<String>, sourceLang: String, targetLang: String): Map<String, String> {
         val result = mutableMapOf<String, String>()
         for (word in words) {
-            result[word] = getTranslation(word, sourceLang, targetLang)
+            result[word] = getTranslation(word, sourceLang, targetLang, saveToDb = true)
         }
         return result
+    }
+
+    override suspend fun getAllKnownPhrases(): List<Word> {
+        // Находим все записи, которые содержат пробел и имеют статус отличный от UNKNOWN
+        return wordBox.query(WordEntity_.word.contains(" "))
+            .build()
+            .find()
+            .filter { Familiarity.fromValue(it.familiarity) != Familiarity.UNKNOWN }
+            .map { it.toDomain() }
     }
 }
