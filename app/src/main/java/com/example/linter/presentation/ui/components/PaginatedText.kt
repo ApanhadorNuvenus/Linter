@@ -5,9 +5,8 @@ import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.compose.foundation.pager.PagerState
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,21 +34,24 @@ fun PaginatedLectureText(
     wordMetadata: Map<String, WordMeta>,
     phraseRanges: List<Pair<IntRange, WordMeta>>,
     selectionRange: IntRange?,
+    pagerState: PagerState, // Теперь стейт приходит снаружи, чтобы мы могли им управлять
     modifier: Modifier = Modifier,
-    pageHeight: Dp = 600.dp,
+    pageHeight: Dp = 500.dp, // Немного уменьшили, чтобы влезли кнопки
     onWordClick: (Int) -> Unit,
     onSelectionStart: (Int) -> Unit,
     onSelectionDrag: (Int) -> Unit,
     onSelectionEnd: () -> Unit,
-    onClearSelection: () -> Unit
+    onClearSelection: () -> Unit,
+    onPageCalculated: (List<IntRange>) -> Unit // Передаем диапазоны страниц наверх
 ) {
     val density = LocalDensity.current
     val pageHeightPx = with(density) { pageHeight.toPx() }
-    val style = MaterialTheme.typography.bodyLarge.copy(fontSize = 18.sp, lineHeight = 28.sp)
+
+    // УВЕЛИЧИЛИ ШРИФТ КАК В LINGQ
+    val style = MaterialTheme.typography.bodyLarge.copy(fontSize = 24.sp, lineHeight = 36.sp)
     val textMeasurer = rememberTextMeasurer()
     val maxWidth = with(density) { 360.dp.toPx() }
 
-    // 1. Разбивка на страницы
     val pageCharRanges = remember(text, style, maxWidth, pageHeightPx) {
         val layout = textMeasurer.measure(
             text = text,
@@ -82,13 +84,16 @@ fun PaginatedLectureText(
         ranges
     }
 
-    if (pageCharRanges.isEmpty()) return
+    LaunchedEffect(pageCharRanges) {
+        onPageCalculated(pageCharRanges)
+    }
 
-    val pagerState = rememberPagerState(pageCount = { pageCharRanges.size })
+    if (pageCharRanges.isEmpty()) return
 
     HorizontalPager(
         state = pagerState,
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier.fillMaxWidth().height(pageHeight),
+        userScrollEnabled = false, // ЗАПРЕТИЛИ СВОБОДНЫЙ СКРОЛЛ!
         verticalAlignment = Alignment.Top
     ) { pageIndex ->
         val charRange = pageCharRanges[pageIndex]
@@ -98,7 +103,6 @@ fun PaginatedLectureText(
         val annotated = buildAnnotatedString {
             append(pageText)
 
-            // Сначала слова (базовый слой)
             tokens.filter { it.startIndex >= pageStartOffset && it.endIndex <= charRange.last + 1 && it.isWord }.forEach { token ->
                 val meta = wordMetadata[token.value.lowercase()]
                 val bgColor = getFamiliarityColor(meta?.familiarity)
@@ -111,50 +115,35 @@ fun PaginatedLectureText(
                 }
             }
 
-            // Затем фразы (перекрывают слова)
             phraseRanges.forEach { (range, meta) ->
                 val intersectStart = max(range.first, pageStartOffset)
                 val intersectEnd = min(range.last + 1, charRange.last + 1)
                 if (intersectStart < intersectEnd) {
                     val bgColor = getFamiliarityColor(meta.familiarity)
                     if (bgColor != Color.Transparent) {
-                        addStyle(
-                            style = SpanStyle(background = bgColor),
-                            start = intersectStart - pageStartOffset,
-                            end = intersectEnd - pageStartOffset
-                        )
+                        addStyle(SpanStyle(background = bgColor), intersectStart - pageStartOffset, intersectEnd - pageStartOffset)
                     }
                 }
             }
 
-            // В конце - активное выделение (самый верхний слой с прозрачностью)
             if (selectionRange != null) {
                 val intersectStart = max(selectionRange.first, pageStartOffset)
                 val intersectEnd = min(selectionRange.last + 1, charRange.last + 1)
                 if (intersectStart < intersectEnd) {
-                    addStyle(
-                        style = SpanStyle(background = Color.Gray.copy(alpha = 0.4f)),
-                        start = intersectStart - pageStartOffset,
-                        end = intersectEnd - pageStartOffset
-                    )
+                    addStyle(SpanStyle(background = Color.Gray.copy(alpha = 0.4f)), intersectStart - pageStartOffset, intersectEnd - pageStartOffset)
                 }
             }
         }
 
         var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
 
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(pageHeight)
-        ) {
+        Box(modifier = Modifier.fillMaxSize()) {
             Text(
                 text = annotated,
                 style = style,
                 onTextLayout = { textLayoutResult = it },
                 modifier = Modifier
                     .fillMaxSize()
-                    // Блок для обычных кликов
                     .pointerInput(pageStartOffset) {
                         detectTapGestures(
                             onTap = { pos ->
@@ -163,7 +152,6 @@ fun PaginatedLectureText(
                             }
                         )
                     }
-                    // Блок для выделения фразы (Long Press + Drag)
                     .pointerInput(pageStartOffset) {
                         detectDragGesturesAfterLongPress(
                             onDragStart = { pos ->
@@ -187,7 +175,8 @@ private fun getFamiliarityColor(familiarity: Familiarity?): Color {
     return when (familiarity) {
         Familiarity.UNKNOWN -> Color(0xFFBBDEFB)
         Familiarity.LEARNING -> Color(0xFFFFF9C4)
-        Familiarity.FAMILIAR -> Color.Transparent
+        Familiarity.FAMILIAR -> Color.Transparent // Теперь зеленый нам не нужен, оно просто прозрачное
+        Familiarity.IGNORED -> Color.Transparent
         else -> Color.Transparent
     }
 }

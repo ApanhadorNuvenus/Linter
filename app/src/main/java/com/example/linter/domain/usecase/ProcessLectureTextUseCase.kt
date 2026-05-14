@@ -1,6 +1,5 @@
 package com.example.linter.domain.usecase
 
-import com.example.linter.domain.model.Token
 import com.example.linter.domain.repository.WordRepository
 import com.example.linter.domain.model.TextTokenizer
 
@@ -9,6 +8,8 @@ class ProcessLectureTextUseCase(
     private val tokenizer: TextTokenizer
 ) {
     suspend operator fun invoke(text: String) {
+        // Мы просто токенизируем текст и "закидываем" все уникальные слова в глобальный словарь.
+        // Никаких связей. База данных остается чистой и быстрой.
         val tokens = tokenizer.tokenize(text)
         val words = tokens.filter { it.isWord }.map { it.value }
         wordRepository.addWordsIfNotExist(words)

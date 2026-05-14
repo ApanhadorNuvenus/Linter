@@ -12,6 +12,7 @@ import com.example.linter.domain.repository.LectureRepository
 import com.example.linter.domain.repository.FSRSRepository
 import com.example.linter.domain.model.TextTokenizer
 import com.example.linter.domain.model.TextTranslator
+import com.example.linter.domain.usecase.GetLearningWordsForLectureUseCase
 import com.example.linter.domain.usecase.ProcessLectureTextUseCase
 import com.example.linter.domain.usecase.GetLectureWithWordInfoUseCase
 import com.example.linter.domain.usecase.UpdateWordFamiliarityUseCase
@@ -48,4 +49,8 @@ object AppModule {
     val updateWordFamiliarityUseCase by lazy {
         UpdateWordFamiliarityUseCase(wordRepository, fsrsRepository)
     }
+    val getLearningWordsForLectureUseCase by lazy {
+        GetLearningWordsForLectureUseCase(lectureRepository, wordRepository, tokenizer)
+    }
+
 }

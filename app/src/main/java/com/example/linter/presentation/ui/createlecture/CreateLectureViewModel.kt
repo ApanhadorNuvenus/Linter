@@ -19,11 +19,12 @@ class CreateLectureViewModel : ViewModel() {
         viewModelScope.launch {
             _isProcessing.value = true
             try {
-                lectureRepository.createLecture(title, text, language)
+                // Получаем созданную лекцию
+                val lecture = lectureRepository.createLecture(title, text, language)
+                // Передаем ее ID в UseCase для привязки слов
                 processLectureTextUseCase(text)
                 onSuccess()
             } catch (e: Exception) {
-                // ТЕПЕРЬ ОШИБКИ БУДУТ ВИДНЫ В ЛОГАХ
                 e.printStackTrace()
             } finally {
                 _isProcessing.value = false

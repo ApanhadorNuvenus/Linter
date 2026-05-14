@@ -18,13 +18,16 @@ class WordRepositoryImpl(
     override suspend fun addWordsIfNotExist(words: List<String>) {
         val uniqueWords = words.map { it.lowercase() }.distinct()
         val existingEntities = mutableListOf<WordEntity>()
+
         for (word in uniqueWords) {
             wordBox.query(WordEntity_.word.equal(word)).build().findFirst()?.let {
                 existingEntities.add(it)
             }
         }
+
         val existingSet = existingEntities.map { it.word }.toSet()
         val newEntities = uniqueWords.filter { it !in existingSet }.map { WordEntity(word = it) }
+
         if (newEntities.isNotEmpty()) {
             wordBox.put(newEntities)
         }
@@ -39,13 +42,11 @@ class WordRepositoryImpl(
         val result = translator.translate(word, sourceLang, targetLang)
         val translation = result.getOrElse { "Ошибка" }
 
-        // Сохраняем в БД только если это слово, или если юзер нажал "Учу" (тогда флаг saveToDb = true)
         if (saveToDb) {
             val toSave = entity ?: WordEntity(word = normalized)
             toSave.translation = translation
             wordBox.put(toSave)
         }
-
         return translation
     }
 
@@ -85,7 +86,6 @@ class WordRepositoryImpl(
     }
 
     override suspend fun getAllKnownPhrases(): List<Word> {
-        // Находим все записи, которые содержат пробел и имеют статус отличный от UNKNOWN
         return wordBox.query(WordEntity_.word.contains(" "))
             .build()
             .find()

@@ -10,3 +10,5 @@ data class LectureEntity(
     var text: String = "",
     var language: String = "en"
 )
+// Мы удалили lateinit var words: ToMany<WordEntity>.
+// Лекция снова легкая и хранит только текст!
