@@ -10,7 +10,6 @@ import kotlinx.coroutines.launch
 
 class CreateLectureViewModel : ViewModel() {
     private val lectureRepository = AppModule.lectureRepository
-    private val processLectureTextUseCase = AppModule.processLectureTextUseCase
 
     private val _isProcessing = MutableStateFlow(false)
     val isProcessing: StateFlow<Boolean> = _isProcessing.asStateFlow()
@@ -19,10 +18,9 @@ class CreateLectureViewModel : ViewModel() {
         viewModelScope.launch {
             _isProcessing.value = true
             try {
-                // Получаем созданную лекцию
-                val lecture = lectureRepository.createLecture(title, text, language)
-                // Передаем ее ID в UseCase для привязки слов
-                processLectureTextUseCase(text)
+                // В новой архитектуре мы просто сохраняем лекцию в базу.
+                // Токенизация и поиск слов происходят на лету при открытии LectureDetailScreen.
+                lectureRepository.createLecture(title, text, language)
                 onSuccess()
             } catch (e: Exception) {
                 e.printStackTrace()

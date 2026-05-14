@@ -21,8 +21,9 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.linter.domain.model.Familiarity
 import com.example.linter.domain.model.Token
+import com.example.linter.domain.model.UiWordStatus
+import com.example.linter.domain.model.WordMeta
 import kotlin.math.max
 import kotlin.math.min
 
@@ -34,20 +35,19 @@ fun PaginatedLectureText(
     wordMetadata: Map<String, WordMeta>,
     phraseRanges: List<Pair<IntRange, WordMeta>>,
     selectionRange: IntRange?,
-    pagerState: PagerState, // Теперь стейт приходит снаружи, чтобы мы могли им управлять
+    pagerState: PagerState,
     modifier: Modifier = Modifier,
-    pageHeight: Dp = 500.dp, // Немного уменьшили, чтобы влезли кнопки
+    pageHeight: Dp = 500.dp,
     onWordClick: (Int) -> Unit,
     onSelectionStart: (Int) -> Unit,
     onSelectionDrag: (Int) -> Unit,
     onSelectionEnd: () -> Unit,
     onClearSelection: () -> Unit,
-    onPageCalculated: (List<IntRange>) -> Unit // Передаем диапазоны страниц наверх
+    onPageCalculated: (List<IntRange>) -> Unit
 ) {
     val density = LocalDensity.current
     val pageHeightPx = with(density) { pageHeight.toPx() }
 
-    // УВЕЛИЧИЛИ ШРИФТ КАК В LINGQ
     val style = MaterialTheme.typography.bodyLarge.copy(fontSize = 24.sp, lineHeight = 36.sp)
     val textMeasurer = rememberTextMeasurer()
     val maxWidth = with(density) { 360.dp.toPx() }
@@ -93,7 +93,7 @@ fun PaginatedLectureText(
     HorizontalPager(
         state = pagerState,
         modifier = modifier.fillMaxWidth().height(pageHeight),
-        userScrollEnabled = false, // ЗАПРЕТИЛИ СВОБОДНЫЙ СКРОЛЛ!
+        userScrollEnabled = false,
         verticalAlignment = Alignment.Top
     ) { pageIndex ->
         val charRange = pageCharRanges[pageIndex]
@@ -103,9 +103,10 @@ fun PaginatedLectureText(
         val annotated = buildAnnotatedString {
             append(pageText)
 
+            // Сначала рисуем цвета отдельных слов
             tokens.filter { it.startIndex >= pageStartOffset && it.endIndex <= charRange.last + 1 && it.isWord }.forEach { token ->
                 val meta = wordMetadata[token.value.lowercase()]
-                val bgColor = getFamiliarityColor(meta?.familiarity)
+                val bgColor = getWordColor(meta?.status)
                 if (bgColor != Color.Transparent) {
                     addStyle(
                         style = SpanStyle(background = bgColor),
@@ -115,17 +116,19 @@ fun PaginatedLectureText(
                 }
             }
 
+            // Затем фразы перекрывают слова
             phraseRanges.forEach { (range, meta) ->
                 val intersectStart = max(range.first, pageStartOffset)
                 val intersectEnd = min(range.last + 1, charRange.last + 1)
                 if (intersectStart < intersectEnd) {
-                    val bgColor = getFamiliarityColor(meta.familiarity)
+                    val bgColor = getWordColor(meta.status)
                     if (bgColor != Color.Transparent) {
                         addStyle(SpanStyle(background = bgColor), intersectStart - pageStartOffset, intersectEnd - pageStartOffset)
                     }
                 }
             }
 
+            // И активное выделение (самое верхнее)
             if (selectionRange != null) {
                 val intersectStart = max(selectionRange.first, pageStartOffset)
                 val intersectEnd = min(selectionRange.last + 1, charRange.last + 1)
@@ -171,12 +174,10 @@ fun PaginatedLectureText(
     }
 }
 
-private fun getFamiliarityColor(familiarity: Familiarity?): Color {
-    return when (familiarity) {
-        Familiarity.UNKNOWN -> Color(0xFFBBDEFB)
-        Familiarity.LEARNING -> Color(0xFFFFF9C4)
-        Familiarity.FAMILIAR -> Color.Transparent // Теперь зеленый нам не нужен, оно просто прозрачное
-        Familiarity.IGNORED -> Color.Transparent
-        else -> Color.Transparent
+private fun getWordColor(status: UiWordStatus?): Color {
+    return when (status) {
+        UiWordStatus.BLUE, null -> Color(0xFFE3F2FD) // Светло-синий (Новое)
+        UiWordStatus.YELLOW -> Color(0xFFFFF9C4)     // Желтый (Учим)
+        UiWordStatus.TRANSPARENT -> Color.Transparent // Прозрачный (Знаем/Игнорируем)
     }
 }

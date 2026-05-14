@@ -6,7 +6,7 @@ import io.objectbox.annotation.Id
 @Entity
 data class FlashCardEntity(
     @Id var id: Long = 0,
-    var wordId: Long = 0,       // связь с WordEntity
+    var contextCardId: Long = 0, // ТЕПЕРЬ СВЯЗЬ С КОНТЕКСТОМ, А НЕ СО СЛОВОМ
     var stability: Double = 2.5,
     var difficulty: Double = 2.5,
     var interval: Int = 0,

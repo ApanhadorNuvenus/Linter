@@ -26,7 +26,6 @@ fun LectureDetailScreen(
     var pageRanges by remember { mutableStateOf<List<IntRange>>(emptyList()) }
     val pagerState = rememberPagerState(pageCount = { maxOf(1, pageRanges.size) })
 
-    // Отслеживаем действия (переход на страницу ИЛИ закрытие лекции)
     LaunchedEffect(uiState.pendingAction) {
         when (val action = uiState.pendingAction) {
             is PageAction.TurnPage -> {
@@ -35,7 +34,7 @@ fun LectureDetailScreen(
             }
             is PageAction.FinishLecture -> {
                 viewModel.clearPendingAction()
-                onBack() // Выходит из лекции!
+                onBack()
             }
             null -> {}
         }
@@ -86,7 +85,6 @@ fun LectureDetailScreen(
                             if (pagerState.currentPage < pageRanges.size - 1) {
                                 viewModel.onAttemptPageTurn(pageRanges[pagerState.currentPage], pagerState.currentPage + 1)
                             } else {
-                                // ИСПРАВЛЕНИЕ: Вызываем onAttemptFinish для последней страницы
                                 viewModel.onAttemptFinish(pageRanges[pagerState.currentPage])
                             }
                         }
@@ -97,12 +95,14 @@ fun LectureDetailScreen(
             }
         }
 
-        if (uiState.popupWord != null) {
+        // Попап слова - теперь обрабатывает все варианты
+        if (uiState.popupState !is PopupState.Hidden) {
             WordPopup(
-                word = uiState.popupWord!!,
-                translation = uiState.popupTranslation ?: "Загрузка...",
-                familiarity = uiState.popupFamiliarity,
-                onFamiliarityChange = { viewModel.changeFamiliarity(uiState.popupWord!!, it) },
+                state = uiState.popupState,
+                onStartLearning = { word, trans, context -> viewModel.onStartLearning(word, trans, context) },
+                onMarkAsKnown = { word, cardId -> viewModel.onMarkAsKnown(word, cardId) },
+                onMarkAsIgnored = { word -> viewModel.onMarkAsIgnored(word) },
+                onChangeLearningStatus = { cardId, word, status -> viewModel.onChangeLearningStatus(cardId, word, status) },
                 onDismiss = { viewModel.dismissPopup() }
             )
         }
