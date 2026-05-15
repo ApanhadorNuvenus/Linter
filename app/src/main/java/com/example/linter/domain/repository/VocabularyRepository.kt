@@ -16,7 +16,17 @@ interface VocabularyRepository {
     // Действия пользователя
     suspend fun markAsKnown(word: String)
     suspend fun markAsIgnored(word: String)
-    suspend fun createLearningCard(word: String, lectureId: Long, contextSentence: String, translation: String, status: LearningStatus)
+
+    // ИЗМЕНЕНИЕ: Добавлен youtubeVideoId: Long = 0L
+    suspend fun createLearningCard(
+        word: String,
+        lectureId: Long,
+        youtubeVideoId: Long = 0L,
+        contextSentence: String,
+        translation: String,
+        status: LearningStatus
+    )
+
     suspend fun updateCardStatus(cardId: Long, newStatus: LearningStatus)
     suspend fun moveCardToKnown(cardId: Long, word: String)
 }

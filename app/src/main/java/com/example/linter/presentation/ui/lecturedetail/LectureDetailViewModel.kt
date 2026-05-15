@@ -166,7 +166,8 @@ class LectureDetailViewModel : ViewModel() {
     fun onStartLearning(word: String, translation: String, contextSentence: String) {
         val state = _uiState.value
         viewModelScope.launch {
-            vocabularyRepository.createLearningCard(word, state.lectureId, contextSentence, translation, LearningStatus.NEW)
+            // ИЗМЕНЕНИЕ: передаем 0L как youtubeVideoId
+            vocabularyRepository.createLearningCard(word, state.lectureId, 0L, contextSentence, translation, LearningStatus.NEW)
             refreshWordState(word)
             dismissPopup()
         }
@@ -253,7 +254,8 @@ class LectureDetailViewModel : ViewModel() {
                     val token = state.tokens.find { it.value.lowercase() == word }
                     val context = if (token != null) extractSentence(state.text, token.startIndex) else ""
                     val trans = vocabularyRepository.fetchTranslation(word, state.language)
-                    vocabularyRepository.createLearningCard(word, state.lectureId, context, trans, LearningStatus.NEW)
+                    // ИЗМЕНЕНИЕ: передаем 0L как youtubeVideoId
+                    vocabularyRepository.createLearningCard(word, state.lectureId, 0L, context, trans, LearningStatus.NEW)
                 } else {
                     vocabularyRepository.markAsKnown(word)
                 }

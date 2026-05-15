@@ -93,15 +93,24 @@ class VocabularyRepositoryImpl(
         vocabBox.put(item)
     }
 
-    override suspend fun createLearningCard(word: String, lectureId: Long, contextSentence: String, translation: String, status: LearningStatus) {
+    // ИЗМЕНЕНИЕ: Добавлен youtubeVideoId и передан в ContextCardEntity
+    override suspend fun createLearningCard(
+        word: String,
+        lectureId: Long,
+        youtubeVideoId: Long,
+        contextSentence: String,
+        translation: String,
+        status: LearningStatus
+    ) {
         val item = getOrCreateVocabItem(word)
         item.isKnown = false
         item.isIgnored = false
         vocabBox.put(item)
 
-        val card = com.example.linter.data.local.entity.ContextCardEntity(
+        val card = ContextCardEntity(
             vocabularyItemId = item.id,
             lectureId = lectureId,
+            youtubeVideoId = youtubeVideoId, // Сохраняем ID видео, если оно есть
             contextSentence = contextSentence,
             translation = translation,
             status = status.level

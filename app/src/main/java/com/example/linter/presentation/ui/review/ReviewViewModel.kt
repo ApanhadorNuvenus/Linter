@@ -210,7 +210,8 @@ class ReviewViewModel : ViewModel() {
 
     fun onStartLearning(word: String, translation: String, contextSentence: String) {
         viewModelScope.launch {
-            vocabularyRepository.createLearningCard(word, 0L, contextSentence, translation, LearningStatus.NEW)
+            // ИЗМЕНЕНИЕ: передаем 0L как youtubeVideoId
+            vocabularyRepository.createLearningCard(word, 0L, 0L, contextSentence, translation, LearningStatus.NEW)
             refreshCurrentCard()
             dismissPopup()
         }
