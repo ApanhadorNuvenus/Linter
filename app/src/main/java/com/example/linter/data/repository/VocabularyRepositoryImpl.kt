@@ -99,15 +99,27 @@ class VocabularyRepositoryImpl(
         item.isIgnored = false
         vocabBox.put(item)
 
-        val card = ContextCardEntity(
+        val card = com.example.linter.data.local.entity.ContextCardEntity(
             vocabularyItemId = item.id,
             lectureId = lectureId,
             contextSentence = contextSentence,
             translation = translation,
             status = status.level
         )
-        cardBox.put(card)
-        // TODO: Здесь же генерировать FlashCardEntity для FSRS
+        val contextCardId = cardBox.put(card)
+
+        // Генерируем карточку FSRS (Due date = прямо сейчас, Phase = Added)
+        val flashCard = com.example.linter.data.local.entity.FlashCardEntity(
+            contextCardId = contextCardId,
+            stability = 0.0,
+            difficulty = 0.0,
+            interval = 0,
+            dueDateMillis = System.currentTimeMillis(),
+            reviewCount = 0,
+            lastReviewMillis = System.currentTimeMillis(),
+            phase = com.example.linter.data.fsrs.CardPhase.Added.value
+        )
+        com.example.linter.data.local.ObjectBox.flashCardBox.put(flashCard)
     }
 
     override suspend fun updateCardStatus(cardId: Long, newStatus: LearningStatus) {

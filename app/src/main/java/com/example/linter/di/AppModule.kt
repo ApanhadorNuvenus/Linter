@@ -27,4 +27,7 @@ object AppModule {
 
     // Примечание: Старые UseCase удалены.
     // Теперь ViewModels напрямую обращаются к умному VocabularyRepository.
+    val reviewRepository: com.example.linter.domain.repository.ReviewRepository by lazy {
+        com.example.linter.data.repository.ReviewRepositoryImpl(vocabularyRepository, tokenizer)
+    }
 }

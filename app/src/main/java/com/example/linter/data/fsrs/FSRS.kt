@@ -2,6 +2,7 @@ package com.example.linter.data.fsrs
 
 import android.annotation.SuppressLint
 import androidx.compose.ui.graphics.Color
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.floor
@@ -25,45 +26,16 @@ class FSRS(
     private val factor = 0.9.pow(1.0 / decay) - 1
     private val enableFuzz = true
 
-    // Временно используем заглушки для цветов (замените на ваши реальные цвета)
     private val colorEasy = Color.Blue.hashCode()
     private val colorGood = Color.Green.hashCode()
     private val colorHard = Color.Magenta.hashCode()
     private val colorAgain = Color.Red.hashCode()
 
     var gradeList = mutableListOf(
-        Grade(
-            color = colorEasy,
-            title = "Easy",
-            choice = Rating.Easy,
-            durationMillis = 0,
-            interval = 0,
-            txt = ""
-        ),
-        Grade(
-            color = colorGood,
-            title = "Good",
-            choice = Rating.Good,
-            durationMillis = 0,
-            interval = 0,
-            txt = ""
-        ),
-        Grade(
-            color = colorHard,
-            title = "Hard",
-            choice = Rating.Hard,
-            durationMillis = 0,
-            interval = 0,
-            txt = ""
-        ),
-        Grade(
-            color = colorAgain,
-            title = "Again",
-            choice = Rating.Again,
-            durationMillis = 0,
-            interval = 0,
-            txt = ""
-        ),
+        Grade(color = colorEasy, title = "Easy", choice = Rating.Easy, durationMillis = 0, interval = 0, txt = ""),
+        Grade(color = colorGood, title = "Good", choice = Rating.Good, durationMillis = 0, interval = 0, txt = ""),
+        Grade(color = colorHard, title = "Hard", choice = Rating.Hard, durationMillis = 0, interval = 0, txt = ""),
+        Grade(color = colorAgain, title = "Again", choice = Rating.Again, durationMillis = 0, interval = 0, txt = "")
     )
 
     fun calculate(flashCard: FlashCard): List<Grade> {
@@ -88,10 +60,11 @@ class FSRS(
 
         when (flashCard.phase) {
             CardPhase.Added.value -> {
-                stateAgain = InitState()
-                stateHard = InitState()
-                stateGood = InitState()
-                stateEasy = InitState()
+                // ИСПРАВЛЕНИЕ: Теперь мы берем настоящие начальные значения, а не нули!
+                stateAgain = initState(Rating.Again)
+                stateHard = initState(Rating.Hard)
+                stateGood = initState(Rating.Good)
+                stateEasy = initState(Rating.Easy)
 
                 ivlEasy = 1
 
@@ -102,9 +75,8 @@ class FSRS(
                 durationGood = 10 * 60 * 1000L
                 durationEasy = ivlEasy * dayConvertor
             }
-
             CardPhase.ReLearning.value -> {
-                if (flashCard.difficulty == 0.0) {
+                if (flashCard.difficulty <= 0.0) {
                     stateAgain = initState(Rating.Again)
                     stateHard = initState(Rating.Hard)
                     stateGood = initState(Rating.Good)
@@ -113,22 +85,10 @@ class FSRS(
                     val lastD = flashCard.difficulty
                     val lastS = flashCard.stability
 
-                    stateAgain = InitState(
-                        difficulty = nextDifficulty(lastD, Rating.Again),
-                        stability = nextShortTermStability(lastS, Rating.Again)
-                    )
-                    stateHard = InitState(
-                        difficulty = nextDifficulty(lastD, Rating.Hard),
-                        stability = nextShortTermStability(lastS, Rating.Hard)
-                    )
-                    stateGood = InitState(
-                        difficulty = nextDifficulty(lastD, Rating.Good),
-                        stability = nextShortTermStability(lastS, Rating.Good)
-                    )
-                    stateEasy = InitState(
-                        difficulty = nextDifficulty(lastD, Rating.Easy),
-                        stability = nextShortTermStability(lastS, Rating.Easy)
-                    )
+                    stateAgain = InitState(nextDifficulty(lastD, Rating.Again), nextShortTermStability(lastS, Rating.Again))
+                    stateHard = InitState(nextDifficulty(lastD, Rating.Hard), nextShortTermStability(lastS, Rating.Hard))
+                    stateGood = InitState(nextDifficulty(lastD, Rating.Good), nextShortTermStability(lastS, Rating.Good))
+                    stateEasy = InitState(nextDifficulty(lastD, Rating.Easy), nextShortTermStability(lastS, Rating.Easy))
                 }
 
                 ivlGood = nextInterval(stateGood.stability)
@@ -142,30 +102,19 @@ class FSRS(
                 durationGood = ivlGood * dayConvertor
                 durationEasy = ivlEasy * dayConvertor
             }
-
             else -> {
                 val interval = flashCard.interval
-                val lastD = flashCard.difficulty
-                val lastS = flashCard.stability
+
+                // АВТО-ЛЕЧЕНИЕ БАЗЫ ДАННЫХ: Если в БД закралась сломанная карточка с нулями, мы её лечим
+                val lastD = if (flashCard.difficulty <= 0.0) initDifficulty(Rating.Good) else flashCard.difficulty
+                val lastS = if (flashCard.stability <= 0.0) initStability(Rating.Good) else flashCard.stability
 
                 val retrievability = forgettingCurve(interval.toDouble(), lastS)
 
-                stateAgain = InitState(
-                    difficulty = nextDifficulty(lastD, Rating.Again),
-                    stability = nextForgetStability(lastD, lastS, retrievability)
-                )
-                stateHard = InitState(
-                    difficulty = nextDifficulty(lastD, Rating.Hard),
-                    stability = nextRecallStability(lastD, lastS, retrievability, Rating.Hard)
-                )
-                stateGood = InitState(
-                    difficulty = nextDifficulty(lastD, Rating.Good),
-                    stability = nextRecallStability(lastD, lastS, retrievability, Rating.Good)
-                )
-                stateEasy = InitState(
-                    difficulty = nextDifficulty(lastD, Rating.Easy),
-                    stability = nextRecallStability(lastD, lastS, retrievability, Rating.Easy)
-                )
+                stateAgain = InitState(nextDifficulty(lastD, Rating.Again), nextForgetStability(lastD, lastS, retrievability))
+                stateHard = InitState(nextDifficulty(lastD, Rating.Hard), nextRecallStability(lastD, lastS, retrievability, Rating.Hard))
+                stateGood = InitState(nextDifficulty(lastD, Rating.Good), nextRecallStability(lastD, lastS, retrievability, Rating.Good))
+                stateEasy = InitState(nextDifficulty(lastD, Rating.Easy), nextRecallStability(lastD, lastS, retrievability, Rating.Easy))
 
                 ivlHard = nextInterval(stateHard.stability)
                 ivlGood = nextInterval(stateGood.stability)
@@ -185,34 +134,10 @@ class FSRS(
             }
         }
 
-        gradeList[0] = gradeList[0].copy(
-            stability = stateEasy.stability,
-            difficulty = stateEasy.difficulty,
-            durationMillis = durationEasy,
-            interval = ivlEasy,
-            txt = txtEasy
-        )
-        gradeList[1] = gradeList[1].copy(
-            stability = stateGood.stability,
-            difficulty = stateGood.difficulty,
-            durationMillis = durationGood,
-            interval = ivlGood,
-            txt = txtGood
-        )
-        gradeList[2] = gradeList[2].copy(
-            stability = stateHard.stability,
-            difficulty = stateHard.difficulty,
-            durationMillis = durationHard,
-            interval = ivlHard,
-            txt = txtHard
-        )
-        gradeList[3] = gradeList[3].copy(
-            stability = stateAgain.stability,
-            difficulty = stateAgain.difficulty,
-            interval = flashCard.interval,
-            durationMillis = 3 * 60 * 1000L,
-            txt = "< 3 Min"
-        )
+        gradeList[0] = gradeList[0].copy(stability = stateEasy.stability, difficulty = stateEasy.difficulty, durationMillis = durationEasy, interval = ivlEasy, txt = txtEasy)
+        gradeList[1] = gradeList[1].copy(stability = stateGood.stability, difficulty = stateGood.difficulty, durationMillis = durationGood, interval = ivlGood, txt = txtGood)
+        gradeList[2] = gradeList[2].copy(stability = stateHard.stability, difficulty = stateHard.difficulty, durationMillis = durationHard, interval = ivlHard, txt = txtHard)
+        gradeList[3] = gradeList[3].copy(stability = stateAgain.stability, difficulty = stateAgain.difficulty, interval = flashCard.interval, durationMillis = 3 * 60 * 1000L, txt = "< 3 Min")
 
         return gradeList
     }
@@ -223,26 +148,17 @@ class FSRS(
         else "$days day"
     }
 
-    private fun applyFuzz(
-        interval: Double,
-        fuzzFactor: Double,
-        scheduledDays: Int = 0
-    ): Double {
-        if (!enableFuzz || interval < 2.5) return interval
-
+    private fun applyFuzz(interval: Double, fuzzFactor: Double, scheduledDays: Int = 0): Double {
+        // Дополнительная защита от NaN на всякий случай
+        if (!enableFuzz || interval < 2.5 || interval.isNaN()) return interval
         val ivl = interval.roundToInt()
         var minIvl = max(2, (ivl * 0.95 - 1).roundToInt())
         val maxIvl = (ivl * 1.05 + 1).roundToInt()
-
-        if (isReview && ivl > scheduledDays)
-            minIvl = max(minIvl, scheduledDays + 1)
-
+        if (isReview && ivl > scheduledDays) minIvl = max(minIvl, scheduledDays + 1)
         return floor(fuzzFactor * (maxIvl - minIvl + 1) + minIvl)
     }
 
-    private fun forgettingCurve(interval: Double, stability: Double): Double {
-        return exp(-interval / stability)
-    }
+    private fun forgettingCurve(interval: Double, stability: Double): Double = exp(-interval / stability)
 
     private fun generateFuzzFactor(): Double {
         val seed = System.currentTimeMillis()
@@ -254,35 +170,22 @@ class FSRS(
         val base = params[4]
         val exponent = params[5] * (rating.value - 1)
         val raw = base - exp(exponent) + 1
-        return String.format("%.2f", raw.coerceIn(1.0, 10.0)).toDouble()
+        return String.format(Locale.US, "%.2f", raw.coerceIn(1.0, 10.0)).toDouble()
     }
 
     private fun initStability(rating: Rating): Double {
         val index = rating.value - 1
         val value = params.getOrElse(index) { 0.1 }
-        return String.format("%.2f", value.coerceAtMost(0.1)).toDouble()
+        return String.format(Locale.US, "%.2f", value.coerceAtMost(0.1)).toDouble()
     }
 
-    private fun initState(rating: Rating): InitState {
-        return InitState(
-            difficulty = initDifficulty(rating),
-            stability = initStability(rating)
-        )
-    }
+    private fun initState(rating: Rating): InitState = InitState(initDifficulty(rating), initStability(rating))
 
-    private fun linearDamping(delta: Double, oldD: Double): Double {
-        return delta * (10 - oldD / 9)
-    }
+    private fun linearDamping(delta: Double, oldD: Double): Double = delta * (10 - oldD / 9)
 
-    private fun meanReversion(initD: Double, nextD: Double): Double {
-        return params[7] * initD + (1 - params[7]) * nextD
-    }
+    private fun meanReversion(initD: Double, nextD: Double): Double = params[7] * initD + (1 - params[7]) * nextD
 
-    private fun nextInterval(
-        stability: Double,
-        maxInterval: Int = 36500,
-        lastInterval: Int = 0
-    ): Int {
+    private fun nextInterval(stability: Double, maxInterval: Int = 36500, lastInterval: Int = 0): Int {
         val fuzzFactor = generateFuzzFactor()
         val rawInterval = stability / factor * (requestRetention.pow(1 / decay) - 1)
         val fuzzed = applyFuzz(rawInterval, fuzzFactor, scheduledDays = lastInterval)
@@ -294,49 +197,26 @@ class FSRS(
         val damped = linearDamping(deltaD, currentD)
         val nextD = currentD + damped
         val reverted = meanReversion(initDifficulty(Rating.Easy), nextD)
-        return String.format("%.2f", reverted.coerceIn(1.0, 10.0)).toDouble()
+        return String.format(Locale.US, "%.2f", reverted.coerceIn(1.0, 10.0)).toDouble()
     }
 
     private fun nextShortTermStability(currentS: Double, rating: Rating): Double {
         var sinc = exp(params[17] * (rating.value - 3 + params[18])) * currentS.pow(-params[19])
-        if (rating.value >= 3) {
-            sinc = max(sinc, 1.0)
-        }
-        return String.format("%.2f", abs(currentS * sinc)).toDouble()
+        if (rating.value >= 3) sinc = max(sinc, 1.0)
+        return String.format(Locale.US, "%.2f", abs(currentS * sinc)).toDouble()
     }
 
-    private fun nextForgetStability(
-        difficulty: Double,
-        stability: Double,
-        retrievability: Double
-    ): Double {
+    private fun nextForgetStability(difficulty: Double, stability: Double, retrievability: Double): Double {
         val sMin = stability / exp(params[17] * params[18])
-
-        val result = params[11] *
-                difficulty.pow(-params[12]) *
-                ((stability + 1).pow(params[13]) - 1) *
-                exp((1 - retrievability) * params[14])
-
-        return "%.2f".format(min(result, sMin)).toDouble()
+        val result = params[11] * difficulty.pow(-params[12]) * ((stability + 1).pow(params[13]) - 1) * exp((1 - retrievability) * params[14])
+        return String.format(Locale.US, "%.2f", min(result, sMin)).toDouble()
     }
 
-    private fun nextRecallStability(
-        d: Double,
-        s: Double,
-        r: Double,
-        rating: Rating
-    ): Double {
+    private fun nextRecallStability(d: Double, s: Double, r: Double, rating: Rating): Double {
         val hardPenalty = if (rating == Rating.Hard) params[15] else 1.0
         val easyBonus = if (rating == Rating.Easy) params[16] else 1.0
-
-        val factor = exp(params[8]) *
-                (11 - d) *
-                s.pow(-params[9]) *
-                (exp((1 - r) * params[10]) - 1) *
-                hardPenalty *
-                easyBonus
-
+        val factor = exp(params[8]) * (11 - d) * s.pow(-params[9]) * (exp((1 - r) * params[10]) - 1) * hardPenalty * easyBonus
         val result = s * (1 + factor)
-        return "%.2f".format(result).toDouble()
+        return String.format(Locale.US, "%.2f", result).toDouble()
     }
 }

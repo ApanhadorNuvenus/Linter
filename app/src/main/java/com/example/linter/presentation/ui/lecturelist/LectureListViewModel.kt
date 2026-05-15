@@ -15,10 +15,13 @@ class LectureListViewModel : ViewModel() {
     private val _lectures = MutableStateFlow<List<Lecture>>(emptyList())
     val lectures: StateFlow<List<Lecture>> = _lectures.asStateFlow()
 
-    // УДАЛИТЕ ИЛИ ЗАКОММЕНТИРУЙТЕ ЭТОТ БЛОК:
-    // init {
-    //     loadLectures()
-    // }
+    private val reviewRepository = AppModule.reviewRepository
+    private val _dueCardsCount = MutableStateFlow(0)
+    val dueCardsCount: StateFlow<Int> = _dueCardsCount.asStateFlow()
+
+    fun loadDueCount() {
+        viewModelScope.launch { _dueCardsCount.value = reviewRepository.getDueCardsCount() }
+    }
 
     fun loadLectures() {
         viewModelScope.launch {

@@ -14,6 +14,7 @@ sealed class Screen(val route: String) {
     object LectureDetail : Screen("lecture_detail/{lectureId}") {
         fun createRoute(id: Long) = "lecture_detail/$id"
     }
+    object Review : Screen("review")
 }
 
 @Composable
@@ -23,8 +24,12 @@ fun NavGraph() {
         composable(Screen.LectureList.route) {
             LectureListScreen(
                 onNavigateToCreate = { navController.navigate(Screen.CreateLecture.route) },
+                onNavigateToReview = { navController.navigate(Screen.Review.route) }, // ТУТ
                 onLectureClick = { id -> navController.navigate(Screen.LectureDetail.createRoute(id)) }
             )
+        }
+        composable(Screen.Review.route) {
+            com.example.linter.presentation.ui.review.ReviewScreen(onFinish = { navController.popBackStack() })
         }
         composable(Screen.CreateLecture.route) {
             CreateLectureScreen(onCreated = { navController.popBackStack() })
