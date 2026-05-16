@@ -95,7 +95,10 @@ fun YoutubeDetailScreen(
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     contentPadding = PaddingValues(16.dp)
                 ) {
-                    itemsIndexed(state.subtitles) { index, block ->
+                    itemsIndexed(
+                        items = state.subtitles,
+                        key = { _, block -> block.id } // Это заставит Compose обновлять список "умно"
+                    ) { index, block ->
                         val isActive = index == state.currentBlockIndex
 
                         Column(

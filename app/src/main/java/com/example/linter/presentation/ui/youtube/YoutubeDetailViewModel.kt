@@ -1,10 +1,8 @@
 package com.example.linter.presentation.ui.youtube
 
-import androidx.annotation.OptIn
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
-import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.MergingMediaSource
@@ -20,18 +18,19 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 data class YoutubeDetailState(
     val videoId: Long = 0,
     val title: String = "",
     val isLoading: Boolean = true,
-    val error: String? = null, // ИСПРАВЛЕНИЕ: Добавили поле ошибки
+    val error: String? = null,
 
     val subtitles: List<SubtitleBlock> = emptyList(),
     val currentBlockIndex: Int = -1,
 
-    val tokenizedBlocks: Map<Int, List<Token>> = emptyMap(),
+    val tokenizedBlocks: Map<Long, List<Token>> = emptyMap(), // Изменено на Long
     val wordMeta: Map<String, WordMeta> = emptyMap(),
 
     val translationMode: TranslationMode = TranslationMode.YOUTUBE_NATIVE,
@@ -52,7 +51,6 @@ class YoutubeDetailViewModel : ViewModel() {
     private var syncJob: Job? = null
     private var translateJob: Job? = null
 
-    @OptIn(UnstableApi::class)
     fun initVideo(videoId: Long, player: ExoPlayer) {
         exoPlayer = player
         viewModelScope.launch {
@@ -60,11 +58,12 @@ class YoutubeDetailViewModel : ViewModel() {
 
             _uiState.value = _uiState.value.copy(videoId = videoId, title = video.title, isLoading = true, error = null)
 
-            val infoResult = repo.fetchPlaybackInfo(video.url)
+            // Передаем videoId для проверки кэша в базе данных
+            val infoResult = repo.fetchPlaybackInfo(videoId, video.url)
+
             if (infoResult.isSuccess) {
                 val info = infoResult.getOrThrow()
 
-                // ИСПРАВЛЕНИЕ: Создаем источник с правильным User-Agent, чтобы YouTube разрешил стриминг
                 val httpDataSourceFactory = DefaultHttpDataSource.Factory()
                     .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
@@ -95,7 +94,6 @@ class YoutubeDetailViewModel : ViewModel() {
                 if (mode == TranslationMode.LOCAL_ML_KIT) triggerLocalTranslation()
                 startSubtitleSync()
             } else {
-                // ИСПРАВЛЕНИЕ: Если произошла ошибка, выключаем загрузку и показываем её
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     error = infoResult.exceptionOrNull()?.message ?: "Неизвестная ошибка при загрузке"
@@ -116,6 +114,7 @@ class YoutubeDetailViewModel : ViewModel() {
                     _uiState.value = _uiState.value.copy(currentBlockIndex = activeIndex)
                 }
 
+                // Сохраняем прогресс видео в БД
                 if (currentPos > 0 && (currentPos % 5000) in 0..200) {
                     repo.updateProgress(_uiState.value.videoId, currentPos)
                 }
@@ -126,23 +125,65 @@ class YoutubeDetailViewModel : ViewModel() {
 
     fun setTranslationMode(mode: TranslationMode) {
         if (_uiState.value.translationMode == mode) return
-        _uiState.value = _uiState.value.copy(translationMode = mode)
-        if (mode == TranslationMode.LOCAL_ML_KIT) {
-            triggerLocalTranslation()
+
+        viewModelScope.launch {
+            // Очищаем переводы из БД и из UI, чтобы перекачать/перевести заново
+            repo.clearTranslationsForVideo(_uiState.value.videoId)
+            val clearedBlocks = _uiState.value.subtitles.map { it.copy(translatedText = null) }
+
+            _uiState.value = _uiState.value.copy(
+                translationMode = mode,
+                subtitles = clearedBlocks
+            )
+
+            if (mode == TranslationMode.LOCAL_ML_KIT) {
+                triggerLocalTranslation()
+            } else {
+                // Если переключили обратно на YouTube Native - перезагружаем данные
+                initVideo(_uiState.value.videoId, exoPlayer!!)
+            }
         }
     }
 
     private fun triggerLocalTranslation() {
         translateJob?.cancel()
-        translateJob = viewModelScope.launch {
-            val currentBlocks = _uiState.value.subtitles.toMutableList()
-            for (i in currentBlocks.indices) {
-                if (_uiState.value.translationMode != TranslationMode.LOCAL_ML_KIT) break
-                currentBlocks[i] = repo.translateBlockLocally(currentBlocks[i])
-                _uiState.value = _uiState.value.copy(subtitles = currentBlocks.toList())
+        translateJob = viewModelScope.launch(Dispatchers.Default) {
+            while (isActive && _uiState.value.translationMode == TranslationMode.LOCAL_ML_KIT) {
+                val state = _uiState.value
+                val blocks = state.subtitles
+                val currentIndex = maxOf(0, state.currentBlockIndex)
+                var targetIndex = -1
+
+                // Радиальный алгоритм перевода (эффект кругов на воде)
+                for (offset in 0..blocks.size) {
+                    val forwardIndex = currentIndex + offset
+                    val backwardIndex = currentIndex - offset
+
+                    if (forwardIndex in blocks.indices && blocks[forwardIndex].translatedText == null) {
+                        targetIndex = forwardIndex
+                        break
+                    }
+                    if (backwardIndex in blocks.indices && blocks[backwardIndex].translatedText == null) {
+                        targetIndex = backwardIndex
+                        break
+                    }
+                }
+
+                if (targetIndex != -1) {
+                    // Переводим и сразу цементируем в ObjectBox
+                    val translatedBlock = repo.translateAndSaveBlockLocally(blocks[targetIndex])
+
+                    val newBlocks = _uiState.value.subtitles.toMutableList()
+                    newBlocks[targetIndex] = translatedBlock
+                    _uiState.value = _uiState.value.copy(subtitles = newBlocks)
+                } else {
+                    break // Всё переведено!
+                }
             }
         }
     }
+
+    // --- ЛОГИКА СЛОВ (FSRS) ---
 
     fun onWordClicked(word: String, contextSentence: String) {
         val state = _uiState.value
@@ -160,6 +201,7 @@ class YoutubeDetailViewModel : ViewModel() {
 
     fun onStartLearning(word: String, translation: String, contextSentence: String) {
         viewModelScope.launch {
+            // Передаем 0L как lectureId, и videoId как youtubeVideoId
             vocabRepo.createLearningCard(word, 0L, _uiState.value.videoId, contextSentence, translation, LearningStatus.NEW)
             refreshWordState(word)
             dismissPopup()
@@ -204,6 +246,7 @@ class YoutubeDetailViewModel : ViewModel() {
     fun releasePlayer() {
         exoPlayer?.let { player ->
             val pos = player.currentPosition
+            // Сохраняем финальный прогресс при закрытии видео
             CoroutineScope(Dispatchers.IO).launch {
                 repo.updateProgress(_uiState.value.videoId, pos)
             }

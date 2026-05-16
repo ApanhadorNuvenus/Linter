@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -68,8 +69,7 @@ fun YoutubeListScreen(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).clickable { onVideoClick(video.id) },
                         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                     ) {
-                        // ИСПРАВЛЕНИЕ: Добавлен Row для отрисовки превью (thumbnail) и текста
-                        Row(modifier = Modifier.fillMaxWidth()) {
+                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             AsyncImage(
                                 model = video.thumbnailUrl,
                                 contentDescription = "Превью",
@@ -88,6 +88,14 @@ fun YoutubeListScreen(
                                     progress = { progress },
                                     modifier = Modifier.fillMaxWidth()
                                 )
+                            }
+
+                            // Кнопка удаления (Каскадное удаление видео + закэшированных субтитров)
+                            IconButton(
+                                onClick = { viewModel.deleteVideo(video.id) },
+                                modifier = Modifier.padding(end = 8.dp)
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = "Удалить", tint = Color.Gray)
                             }
                         }
                     }

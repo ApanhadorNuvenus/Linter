@@ -9,6 +9,10 @@ interface YoutubeRepository {
     suspend fun getSavedVideos(): List<YoutubeVideo>
     suspend fun getVideoById(id: Long): YoutubeVideo?
     suspend fun updateProgress(id: Long, progressMs: Long)
-    suspend fun fetchPlaybackInfo(url: String): Result<VideoPlaybackInfo>
-    suspend fun translateBlockLocally(block: SubtitleBlock): SubtitleBlock
+    suspend fun deleteVideo(id: Long) // НОВОЕ: Каскадное удаление
+
+    suspend fun fetchPlaybackInfo(videoId: Long, url: String): Result<VideoPlaybackInfo>
+
+    suspend fun translateAndSaveBlockLocally(block: SubtitleBlock): SubtitleBlock // НОВОЕ: Переводит и сохраняет в БД
+    suspend fun clearTranslationsForVideo(videoId: Long) // НОВОЕ: Для смены режима
 }

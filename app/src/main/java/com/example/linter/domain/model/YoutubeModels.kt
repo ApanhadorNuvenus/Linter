@@ -10,11 +10,11 @@ data class YoutubeVideo(
 )
 
 data class SubtitleBlock(
-    val id: Int,
+    val id: Long, // ИСПРАВЛЕНИЕ: Теперь Long, чтобы совпадать с ID базы данных
     val startTimeMs: Long,
     val endTimeMs: Long,
     val sourceText: String,
-    val translatedText: String? = null // Перевод может быть загружен позже локально
+    val translatedText: String? = null
 )
 
 enum class TranslationMode(val title: String) {

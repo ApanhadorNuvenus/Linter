@@ -29,13 +29,11 @@ class YoutubeListViewModel : ViewModel() {
 
     fun addVideo(url: String) {
         viewModelScope.launch {
-            // Включаем загрузку
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
 
             val result = repo.extractAndSaveVideo(url)
 
             if (result.isSuccess) {
-                // ИСПРАВЛЕНИЕ: Обновляем список И выключаем загрузку одновременно
                 val updatedVideos = repo.getSavedVideos()
                 _uiState.value = _uiState.value.copy(
                     videos = updatedVideos,
@@ -47,6 +45,14 @@ class YoutubeListViewModel : ViewModel() {
                     error = result.exceptionOrNull()?.message ?: "Ошибка загрузки"
                 )
             }
+        }
+    }
+
+    fun deleteVideo(id: Long) {
+        viewModelScope.launch {
+            // Удаляем видео и все связанные с ним закэшированные субтитры
+            repo.deleteVideo(id)
+            loadVideos()
         }
     }
 }

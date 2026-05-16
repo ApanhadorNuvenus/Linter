@@ -8,6 +8,8 @@ import com.example.linter.data.local.entity.FlashCardEntity
 import com.example.linter.data.local.entity.LectureEntity
 import com.example.linter.data.local.entity.VocabularyItemEntity
 import com.example.linter.data.local.entity.ContextCardEntity
+import com.example.linter.data.local.entity.YoutubeVideoEntity
+import com.example.linter.data.local.entity.SubtitleBlockEntity
 
 object ObjectBox {
     lateinit var store: BoxStore
@@ -23,4 +25,8 @@ object ObjectBox {
     val lectureBox: Box<LectureEntity> get() = store.boxFor(LectureEntity::class.java)
     val vocabularyBox: Box<VocabularyItemEntity> get() = store.boxFor(VocabularyItemEntity::class.java)
     val contextCardBox: Box<ContextCardEntity> get() = store.boxFor(ContextCardEntity::class.java)
+
+    val youtubeVideoBox: Box<YoutubeVideoEntity> get() = store.boxFor(YoutubeVideoEntity::class.java)
+    // НОВОЕ: Коробка для субтитров
+    val subtitleBlockBox: Box<SubtitleBlockEntity> get() = store.boxFor(SubtitleBlockEntity::class.java)
 }
