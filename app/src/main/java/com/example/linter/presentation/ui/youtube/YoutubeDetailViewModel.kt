@@ -1,8 +1,10 @@
 package com.example.linter.presentation.ui.youtube
 
+import androidx.annotation.OptIn
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.MergingMediaSource
@@ -30,12 +32,14 @@ data class YoutubeDetailState(
     val subtitles: List<SubtitleBlock> = emptyList(),
     val currentBlockIndex: Int = -1,
 
-    val tokenizedBlocks: Map<Long, List<Token>> = emptyMap(), // Изменено на Long
+    val tokenizedBlocks: Map<Long, List<Token>> = emptyMap(),
     val wordMeta: Map<String, WordMeta> = emptyMap(),
 
     val translationMode: TranslationMode = TranslationMode.YOUTUBE_NATIVE,
     val hasYoutubeTranslation: Boolean = false,
+    val sourceLang: String = "en", // НОВОЕ: Храним язык видео
 
+    val playbackSpeed: Float = 1.0f,
     val popupState: PopupState = PopupState.Hidden
 )
 
@@ -51,6 +55,7 @@ class YoutubeDetailViewModel : ViewModel() {
     private var syncJob: Job? = null
     private var translateJob: Job? = null
 
+    @OptIn(UnstableApi::class)
     fun initVideo(videoId: Long, player: ExoPlayer) {
         exoPlayer = player
         viewModelScope.launch {
@@ -58,7 +63,6 @@ class YoutubeDetailViewModel : ViewModel() {
 
             _uiState.value = _uiState.value.copy(videoId = videoId, title = video.title, isLoading = true, error = null)
 
-            // Передаем videoId для проверки кэша в базе данных
             val infoResult = repo.fetchPlaybackInfo(videoId, video.url)
 
             if (infoResult.isSuccess) {
@@ -73,6 +77,7 @@ class YoutubeDetailViewModel : ViewModel() {
 
                 player.setMediaSource(mergedSource)
                 player.prepare()
+                player.setPlaybackSpeed(_uiState.value.playbackSpeed)
                 if (video.progressMs > 0) player.seekTo(video.progressMs)
                 player.play()
 
@@ -88,7 +93,8 @@ class YoutubeDetailViewModel : ViewModel() {
                     tokenizedBlocks = tokenized,
                     wordMeta = metas,
                     hasYoutubeTranslation = info.hasYoutubeTranslation,
-                    translationMode = mode
+                    translationMode = mode,
+                    sourceLang = info.sourceLang // ИСПРАВЛЕНИЕ: Сохраняем язык
                 )
 
                 if (mode == TranslationMode.LOCAL_ML_KIT) triggerLocalTranslation()
@@ -114,7 +120,6 @@ class YoutubeDetailViewModel : ViewModel() {
                     _uiState.value = _uiState.value.copy(currentBlockIndex = activeIndex)
                 }
 
-                // Сохраняем прогресс видео в БД
                 if (currentPos > 0 && (currentPos % 5000) in 0..200) {
                     repo.updateProgress(_uiState.value.videoId, currentPos)
                 }
@@ -123,11 +128,15 @@ class YoutubeDetailViewModel : ViewModel() {
         }
     }
 
+    fun setPlaybackSpeed(speed: Float) {
+        _uiState.value = _uiState.value.copy(playbackSpeed = speed)
+        exoPlayer?.setPlaybackSpeed(speed)
+    }
+
     fun setTranslationMode(mode: TranslationMode) {
         if (_uiState.value.translationMode == mode) return
 
         viewModelScope.launch {
-            // Очищаем переводы из БД и из UI, чтобы перекачать/перевести заново
             repo.clearTranslationsForVideo(_uiState.value.videoId)
             val clearedBlocks = _uiState.value.subtitles.map { it.copy(translatedText = null) }
 
@@ -139,7 +148,6 @@ class YoutubeDetailViewModel : ViewModel() {
             if (mode == TranslationMode.LOCAL_ML_KIT) {
                 triggerLocalTranslation()
             } else {
-                // Если переключили обратно на YouTube Native - перезагружаем данные
                 initVideo(_uiState.value.videoId, exoPlayer!!)
             }
         }
@@ -154,7 +162,6 @@ class YoutubeDetailViewModel : ViewModel() {
                 val currentIndex = maxOf(0, state.currentBlockIndex)
                 var targetIndex = -1
 
-                // Радиальный алгоритм перевода (эффект кругов на воде)
                 for (offset in 0..blocks.size) {
                     val forwardIndex = currentIndex + offset
                     val backwardIndex = currentIndex - offset
@@ -170,20 +177,16 @@ class YoutubeDetailViewModel : ViewModel() {
                 }
 
                 if (targetIndex != -1) {
-                    // Переводим и сразу цементируем в ObjectBox
-                    val translatedBlock = repo.translateAndSaveBlockLocally(blocks[targetIndex])
-
+                    val translatedBlock = repo.translateAndSaveBlockLocally(blocks[targetIndex], state.sourceLang)
                     val newBlocks = _uiState.value.subtitles.toMutableList()
                     newBlocks[targetIndex] = translatedBlock
                     _uiState.value = _uiState.value.copy(subtitles = newBlocks)
                 } else {
-                    break // Всё переведено!
+                    break
                 }
             }
         }
     }
-
-    // --- ЛОГИКА СЛОВ (FSRS) ---
 
     fun onWordClicked(word: String, contextSentence: String) {
         val state = _uiState.value
@@ -191,7 +194,8 @@ class YoutubeDetailViewModel : ViewModel() {
         viewModelScope.launch {
             val meta = state.wordMeta[normalized] ?: WordMeta(UiWordStatus.BLUE)
             if (meta.status == UiWordStatus.BLUE || meta.status == UiWordStatus.TRANSPARENT) {
-                val trans = vocabRepo.fetchTranslation(normalized, "en")
+                // ИСПРАВЛЕНИЕ: Передаем реальный язык видео вместо "en"
+                val trans = vocabRepo.fetchTranslation(normalized, state.sourceLang)
                 _uiState.value = state.copy(popupState = PopupState.NewWord(normalized, trans, contextSentence))
             } else {
                 _uiState.value = state.copy(popupState = PopupState.LearningWord(normalized, meta, contextSentence))
@@ -201,7 +205,6 @@ class YoutubeDetailViewModel : ViewModel() {
 
     fun onStartLearning(word: String, translation: String, contextSentence: String) {
         viewModelScope.launch {
-            // Передаем 0L как lectureId, и videoId как youtubeVideoId
             vocabRepo.createLearningCard(word, 0L, _uiState.value.videoId, contextSentence, translation, LearningStatus.NEW)
             refreshWordState(word)
             dismissPopup()
@@ -246,7 +249,6 @@ class YoutubeDetailViewModel : ViewModel() {
     fun releasePlayer() {
         exoPlayer?.let { player ->
             val pos = player.currentPosition
-            // Сохраняем финальный прогресс при закрытии видео
             CoroutineScope(Dispatchers.IO).launch {
                 repo.updateProgress(_uiState.value.videoId, pos)
             }

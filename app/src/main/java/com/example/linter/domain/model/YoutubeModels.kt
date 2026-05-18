@@ -10,7 +10,7 @@ data class YoutubeVideo(
 )
 
 data class SubtitleBlock(
-    val id: Long, // ИСПРАВЛЕНИЕ: Теперь Long, чтобы совпадать с ID базы данных
+    val id: Long,
     val startTimeMs: Long,
     val endTimeMs: Long,
     val sourceText: String,
@@ -26,5 +26,6 @@ data class VideoPlaybackInfo(
     val videoUrl: String,
     val audioUrl: String,
     val subtitles: List<SubtitleBlock>,
-    val hasYoutubeTranslation: Boolean
+    val hasYoutubeTranslation: Boolean,
+    val sourceLang: String // НОВОЕ: Знаем оригинальный язык видео
 )

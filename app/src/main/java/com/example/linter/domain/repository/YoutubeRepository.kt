@@ -13,6 +13,6 @@ interface YoutubeRepository {
 
     suspend fun fetchPlaybackInfo(videoId: Long, url: String): Result<VideoPlaybackInfo>
 
-    suspend fun translateAndSaveBlockLocally(block: SubtitleBlock): SubtitleBlock // НОВОЕ: Переводит и сохраняет в БД
+    suspend fun translateAndSaveBlockLocally(block: SubtitleBlock, sourceLang: String): SubtitleBlock
     suspend fun clearTranslationsForVideo(videoId: Long) // НОВОЕ: Для смены режима
 }

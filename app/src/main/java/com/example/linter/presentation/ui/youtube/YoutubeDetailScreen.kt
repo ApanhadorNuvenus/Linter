@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -17,11 +18,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.example.linter.domain.model.TranslationMode
@@ -30,7 +31,6 @@ import com.example.linter.presentation.ui.components.WordPopup
 import com.example.linter.presentation.ui.lecturedetail.PopupState
 import kotlinx.coroutines.launch
 
-@androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun YoutubeDetailScreen(
@@ -43,10 +43,11 @@ fun YoutubeDetailScreen(
     val exoPlayer = remember { ExoPlayer.Builder(context).build() }
 
     LaunchedEffect(videoId) { viewModel.initVideo(videoId, exoPlayer) }
-
     DisposableEffect(Unit) { onDispose { viewModel.releasePlayer() } }
 
     var showSettings by remember { mutableStateOf(false) }
+    var speedMenuExpanded by remember { mutableStateOf(false) }
+
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
 
@@ -75,41 +76,77 @@ fun YoutubeDetailScreen(
                     CircularProgressIndicator()
                 }
             } else if (state.error != null) {
-                // ИСПРАВЛЕНИЕ: Выводим ошибку на экран, если видео/сабы не смогли загрузиться
                 Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
                     Text("Ошибка: ${state.error}", color = MaterialTheme.colorScheme.error)
                 }
             } else {
-                AndroidView(
-                    factory = { ctx ->
-                        PlayerView(ctx).apply {
-                            player = exoPlayer
-                            setShowSubtitleButton(false)
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black)
-                )
+                // ВИДЕО ПЛЕЕР И ОВЕРЛЕЙ СКОРОСТИ
+                Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black)) {
+                    AndroidView(
+                        factory = { ctx ->
+                            PlayerView(ctx).apply {
+                                player = exoPlayer
+                                setShowSubtitleButton(false)
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
 
+                    // Кнопка переключения скорости поверх видео
+                    Box(modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)) {
+                        Surface(
+                            color = Color.Black.copy(alpha = 0.6f),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.clickable { speedMenuExpanded = true }
+                        ) {
+                            Text(
+                                text = "${state.playbackSpeed}x",
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = speedMenuExpanded,
+                            onDismissRequest = { speedMenuExpanded = false }
+                        ) {
+                            val speeds = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f)
+                            speeds.forEach { speed ->
+                                DropdownMenuItem(
+                                    text = { Text("${speed}x") },
+                                    onClick = {
+                                        viewModel.setPlaybackSpeed(speed)
+                                        speedMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // СУБТИТРЫ (Новый Центрированный UI)
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxWidth().weight(1f),
-                    contentPadding = PaddingValues(16.dp)
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 16.dp)
                 ) {
                     itemsIndexed(
                         items = state.subtitles,
-                        key = { _, block -> block.id } // Это заставит Compose обновлять список "умно"
+                        key = { _, block -> block.id }
                     ) { index, block ->
                         val isActive = index == state.currentBlockIndex
 
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(if (isActive) Color(0xFFF0F0F0) else Color.Transparent)
+                                .background(if (isActive) Color(0xFFF5F5F5) else Color.Transparent, RoundedCornerShape(8.dp))
                                 .clickable {
                                     exoPlayer.seekTo(block.startTimeMs)
                                     exoPlayer.play()
                                 }
-                                .padding(vertical = 12.dp, horizontal = 8.dp)
+                                .padding(vertical = 16.dp, horizontal = 16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally // Центрируем текст
                         ) {
                             val tokens = state.tokenizedBlocks[block.id] ?: emptyList()
                             val annotatedText = buildAnnotatedString {
@@ -139,7 +176,8 @@ fun YoutubeDetailScreen(
                                 text = annotatedText,
                                 style = MaterialTheme.typography.bodyLarge.copy(
                                     fontSize = 20.sp,
-                                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal
+                                    fontWeight = if (isActive) FontWeight.Medium else FontWeight.Normal,
+                                    textAlign = TextAlign.Center // Центрируем текст внутри самого компонента
                                 ),
                                 onClick = { offset ->
                                     annotatedText.getStringAnnotations("WORD", offset, offset)
@@ -150,11 +188,13 @@ fun YoutubeDetailScreen(
                                 }
                             )
 
-                            Spacer(modifier = Modifier.height(4.dp))
+                            Spacer(modifier = Modifier.height(6.dp))
+
                             Text(
                                 text = block.translatedText ?: if (state.translationMode == TranslationMode.LOCAL_ML_KIT) "Перевод..." else "",
                                 color = Color.Gray,
-                                fontSize = 16.sp
+                                fontSize = 16.sp,
+                                textAlign = TextAlign.Center
                             )
                         }
                     }
