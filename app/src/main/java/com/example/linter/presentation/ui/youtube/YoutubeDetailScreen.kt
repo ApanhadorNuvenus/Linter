@@ -9,12 +9,16 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -44,14 +48,19 @@ fun YoutubeDetailScreen(
     val context = LocalContext.current
     val exoPlayer = remember { ExoPlayer.Builder(context).build() }
 
+    // Утилиты для копирования и уведомлений
+    val clipboardManager = LocalClipboardManager.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
+
     LaunchedEffect(videoId) { viewModel.initVideo(videoId, exoPlayer) }
     DisposableEffect(Unit) { onDispose { viewModel.releasePlayer() } }
 
     var showSettings by remember { mutableStateOf(false) }
     var speedMenuExpanded by remember { mutableStateOf(false) }
+    var qualityMenuExpanded by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
-    val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(state.currentBlockIndex) {
         if (state.currentBlockIndex >= 0 && !listState.isScrollInProgress) {
@@ -60,11 +69,27 @@ fun YoutubeDetailScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) }, // Контейнер для всплывающих уведомлений
         topBar = {
             TopAppBar(
                 title = { Text(state.title, maxLines = 1) },
                 navigationIcon = { TextButton(onClick = onBack) { Text("Назад") } },
                 actions = {
+                    // КНОПКА: Копировать ссылку
+                    IconButton(
+                        onClick = {
+                            if (state.originalUrl.isNotBlank()) {
+                                clipboardManager.setText(AnnotatedString(state.originalUrl))
+                                coroutineScope.launch {
+                                    snackbarHostState.showSnackbar("Ссылка скопирована")
+                                }
+                            }
+                        }
+                    ) {
+                        Icon(Icons.Default.Share, contentDescription = "Копировать ссылку")
+                    }
+
+                    // КНОПКА: Настройки
                     IconButton(onClick = { showSettings = true }) {
                         Icon(Icons.Default.Settings, contentDescription = "Настройки")
                     }
@@ -82,7 +107,7 @@ fun YoutubeDetailScreen(
                     Text("Ошибка: ${state.error}", color = MaterialTheme.colorScheme.error)
                 }
             } else {
-                // ВИДЕО ПЛЕЕР И ОВЕРЛЕЙ СКОРОСТИ
+                // ВИДЕО ПЛЕЕР И ОВЕРЛЕИ
                 Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black)) {
                     AndroidView(
                         factory = { ctx ->
@@ -94,40 +119,78 @@ fun YoutubeDetailScreen(
                         modifier = Modifier.fillMaxSize()
                     )
 
-                    // Кнопка переключения скорости поверх видео
-                    Box(modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)) {
-                        Surface(
-                            color = Color.Black.copy(alpha = 0.6f),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.clickable { speedMenuExpanded = true }
-                        ) {
-                            Text(
-                                text = "${state.playbackSpeed}x",
-                                color = Color.White,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                fontWeight = FontWeight.Bold
-                            )
+                    // ОВЕРЛЕЙ: Меню скорости и качества
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(8.dp)
+                    ) {
+                        // Кнопка Качества
+                        Box {
+                            Surface(
+                                color = Color.Black.copy(alpha = 0.6f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.clickable { qualityMenuExpanded = true }
+                            ) {
+                                Text(
+                                    text = state.currentQuality,
+                                    color = Color.White,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = qualityMenuExpanded,
+                                onDismissRequest = { qualityMenuExpanded = false }
+                            ) {
+                                state.availableQualities.forEach { q ->
+                                    DropdownMenuItem(
+                                        text = { Text(q) },
+                                        onClick = {
+                                            viewModel.changeQuality(q)
+                                            qualityMenuExpanded = false
+                                        }
+                                    )
+                                }
+                            }
                         }
 
-                        DropdownMenu(
-                            expanded = speedMenuExpanded,
-                            onDismissRequest = { speedMenuExpanded = false }
-                        ) {
-                            val speeds = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f)
-                            speeds.forEach { speed ->
-                                DropdownMenuItem(
-                                    text = { Text("${speed}x") },
-                                    onClick = {
-                                        viewModel.setPlaybackSpeed(speed)
-                                        speedMenuExpanded = false
-                                    }
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        // Кнопка Скорости
+                        Box {
+                            Surface(
+                                color = Color.Black.copy(alpha = 0.6f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.clickable { speedMenuExpanded = true }
+                            ) {
+                                Text(
+                                    text = "${state.playbackSpeed}x",
+                                    color = Color.White,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                    fontWeight = FontWeight.Bold
                                 )
+                            }
+
+                            DropdownMenu(
+                                expanded = speedMenuExpanded,
+                                onDismissRequest = { speedMenuExpanded = false }
+                            ) {
+                                listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f).forEach { speed ->
+                                    DropdownMenuItem(
+                                        text = { Text("${speed}x") },
+                                        onClick = {
+                                            viewModel.setPlaybackSpeed(speed)
+                                            speedMenuExpanded = false
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
                 }
 
-                // СУБТИТРЫ (Новый Центрированный UI)
+                // СУБТИТРЫ (Центрированный UI)
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxWidth().weight(1f),
@@ -148,7 +211,7 @@ fun YoutubeDetailScreen(
                                     exoPlayer.play()
                                 }
                                 .padding(vertical = 16.dp, horizontal = 16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally // Центрируем текст
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             val tokens = state.tokenizedBlocks[block.id] ?: emptyList()
                             val annotatedText = buildAnnotatedString {
@@ -179,7 +242,7 @@ fun YoutubeDetailScreen(
                                 style = MaterialTheme.typography.bodyLarge.copy(
                                     fontSize = 20.sp,
                                     fontWeight = if (isActive) FontWeight.Medium else FontWeight.Normal,
-                                    textAlign = TextAlign.Center // Центрируем текст внутри самого компонента
+                                    textAlign = TextAlign.Center
                                 ),
                                 onClick = { offset ->
                                     annotatedText.getStringAnnotations("WORD", offset, offset)
@@ -192,7 +255,7 @@ fun YoutubeDetailScreen(
 
                             Spacer(modifier = Modifier.height(6.dp))
 
-                            // ИЗМЕНЕНИЕ: Динамически выбираем, какой перевод показывать
+                            // Динамический выбор отображаемого перевода
                             val displayedTranslation = when (state.translationMode) {
                                 TranslationMode.YOUTUBE_NATIVE -> block.translatedText ?: ""
                                 TranslationMode.LOCAL_ML_KIT -> block.mlKitTranslatedText ?: "Перевод (ML Kit)..."
@@ -225,6 +288,7 @@ fun YoutubeDetailScreen(
             )
         }
 
+        // ШТОРКА НАСТРОЕК (BottomSheet)
         if (showSettings) {
             ModalBottomSheet(onDismissRequest = { showSettings = false }) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -236,7 +300,6 @@ fun YoutubeDetailScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                // Блокируем опцию YouTube_Native, если YouTube перевода нет
                                 .clickable(enabled = mode != TranslationMode.YOUTUBE_NATIVE || state.hasYoutubeTranslation) {
                                     viewModel.setTranslationMode(mode)
                                 }
@@ -254,6 +317,28 @@ fun YoutubeDetailScreen(
                             )
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+                    HorizontalDivider()
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // КНОПКА ЖЕСТКОЙ ОЧИСТКИ
+                    Button(
+                        onClick = {
+                            showSettings = false
+                            viewModel.reloadAndClearSubtitles()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Warning, contentDescription = "Очистить кэш")
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Очистить кэш и загрузить заново")
+                    }
+
                     Spacer(modifier = Modifier.height(32.dp))
                 }
             }

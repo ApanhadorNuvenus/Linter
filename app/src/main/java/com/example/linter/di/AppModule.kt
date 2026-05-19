@@ -43,6 +43,6 @@ object AppModule {
 
     // YoutubeRepository получает оба транслятора
     val youtubeRepository: YoutubeRepository by lazy {
-        YoutubeRepositoryImpl(mlKitTranslator, onnxTranslator)
+        YoutubeRepositoryImpl(mlKitTranslator, onnxTranslator, context)
     }
 }

@@ -25,8 +25,9 @@ import kotlinx.coroutines.launch
 
 data class YoutubeDetailState(
     val videoId: Long = 0,
+    val originalUrl: String = "",
     val title: String = "",
-    val isLoading: Boolean = true,
+    val isLoading: Boolean = true, // Показывает крутилку на ВЕСЬ экран (только при первом открытии)
     val error: String? = null,
 
     val subtitles: List<SubtitleBlock> = emptyList(),
@@ -37,15 +38,18 @@ data class YoutubeDetailState(
 
     val translationMode: TranslationMode = TranslationMode.YOUTUBE_NATIVE,
     val hasYoutubeTranslation: Boolean = false,
-    val sourceLang: String = "en", // НОВОЕ: Храним язык видео
+    val sourceLang: String = "en",
+
+    val availableQualities: List<String> = emptyList(),
+    val currentQuality: String = "Auto",
 
     val playbackSpeed: Float = 1.0f,
     val popupState: PopupState = PopupState.Hidden
 )
 
 class YoutubeDetailViewModel : ViewModel() {
-        private val repo = AppModule.youtubeRepository
-        private val vocabRepo = AppModule.vocabularyRepository
+    private val repo = AppModule.youtubeRepository
+    private val vocabRepo = AppModule.vocabularyRepository
     private val tokenizer = AndroidBreakIteratorTokenizer()
 
     private val _uiState = MutableStateFlow(YoutubeDetailState())
@@ -56,14 +60,29 @@ class YoutubeDetailViewModel : ViewModel() {
     private var translateJob: Job? = null
 
     @OptIn(UnstableApi::class)
-    fun initVideo(videoId: Long, player: ExoPlayer) {
+    fun initVideo(videoId: Long, player: ExoPlayer, isReload: Boolean = false) {
         exoPlayer = player
+        val targetQuality = repo.getDefaultQuality()
+
         viewModelScope.launch {
             val video = repo.getVideoById(videoId) ?: return@launch
 
-            _uiState.value = _uiState.value.copy(videoId = videoId, title = video.title, isLoading = true, error = null)
+            // Если это первое открытие - показываем загрузку всего экрана.
+            // Если это смена качества (isReload) - экран не прячем!
+            if (!isReload) {
+                _uiState.value = _uiState.value.copy(
+                    videoId = videoId,
+                    title = video.title,
+                    originalUrl = video.url,
+                    currentQuality = targetQuality,
+                    isLoading = true,
+                    error = null
+                )
+            } else {
+                _uiState.value = _uiState.value.copy(currentQuality = targetQuality)
+            }
 
-            val infoResult = repo.fetchPlaybackInfo(videoId, video.url)
+            val infoResult = repo.fetchPlaybackInfo(videoId, video.url, targetQuality)
 
             if (infoResult.isSuccess) {
                 val info = infoResult.getOrThrow()
@@ -72,20 +91,41 @@ class YoutubeDetailViewModel : ViewModel() {
                     .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
                 val videoSource = ProgressiveMediaSource.Factory(httpDataSourceFactory).createMediaSource(MediaItem.fromUri(info.videoUrl))
-                val audioSource = ProgressiveMediaSource.Factory(httpDataSourceFactory).createMediaSource(MediaItem.fromUri(info.audioUrl))
-                val mergedSource = MergingMediaSource(videoSource, audioSource)
+
+                val mergedSource = if (info.audioUrl.isNotBlank() && info.audioUrl != info.videoUrl) {
+                    val audioSource = ProgressiveMediaSource.Factory(httpDataSourceFactory).createMediaSource(MediaItem.fromUri(info.audioUrl))
+                    MergingMediaSource(videoSource, audioSource)
+                } else {
+                    videoSource
+                }
+
+                val positionToSeek = if (isReload) player.currentPosition else video.progressMs
 
                 player.setMediaSource(mergedSource)
                 player.prepare()
                 player.setPlaybackSpeed(_uiState.value.playbackSpeed)
-                if (video.progressMs > 0) player.seekTo(video.progressMs)
+                if (positionToSeek > 0) player.seekTo(positionToSeek)
                 player.play()
 
                 val tokenized = info.subtitles.associate { it.id to tokenizer.tokenize(it.sourceText) }
                 val allWords = tokenized.values.flatten().filter { it.isWord }.map { it.value.lowercase() }.distinct()
                 val metas = vocabRepo.getWordMetas(allWords)
 
-                val mode = if (info.hasYoutubeTranslation) TranslationMode.YOUTUBE_NATIVE else TranslationMode.LOCAL_ML_KIT
+                // ИСПРАВЛЕНИЕ: СОХРАНЯЕМ ВЫБРАННЫЙ РЕЖИМ ПРИ ПЕРЕЗАГРУЗКЕ
+                var mode = if (isReload) {
+                    // При смене качества оставляем текущий мод
+                    _uiState.value.translationMode
+                } else {
+                    // При первом открытии выбираем лучший из доступных
+                    if (info.hasYoutubeTranslation) TranslationMode.YOUTUBE_NATIVE else TranslationMode.LOCAL_ML_KIT
+                }
+
+                // ЗАЩИТА: Если мод стоит YOUTUBE_NATIVE, но перевода от Ютуба на самом деле нет
+                // (например, он пропал после очистки кэша или ложно выставился),
+                // принудительно перекидываем на локальный ML Kit, чтобы не показывать пустой текст.
+                if (mode == TranslationMode.YOUTUBE_NATIVE && !info.hasYoutubeTranslation) {
+                    mode = TranslationMode.LOCAL_ML_KIT
+                }
 
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
@@ -93,17 +133,40 @@ class YoutubeDetailViewModel : ViewModel() {
                     tokenizedBlocks = tokenized,
                     wordMeta = metas,
                     hasYoutubeTranslation = info.hasYoutubeTranslation,
-                    translationMode = mode,
-                    sourceLang = info.sourceLang // ИСПРАВЛЕНИЕ: Сохраняем язык
+                    translationMode = mode, // Применяем безопасный мод
+                    sourceLang = info.sourceLang,
+                    availableQualities = info.availableQualities
                 )
 
-                if (mode == TranslationMode.LOCAL_ML_KIT) triggerLocalTranslation()
+                if (mode != TranslationMode.YOUTUBE_NATIVE) triggerLocalTranslation()
                 startSubtitleSync()
             } else {
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    error = infoResult.exceptionOrNull()?.message ?: "Неизвестная ошибка при загрузке"
-                )
+                if (!isReload) {
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        error = infoResult.exceptionOrNull()?.message ?: "Неизвестная ошибка при загрузке"
+                    )
+                }
+            }
+        }
+    }
+
+    fun changeQuality(quality: String) {
+        if (_uiState.value.currentQuality == quality) return
+        repo.setDefaultQuality(quality)
+        exoPlayer?.let { player ->
+            // isReload = true означает, что экран не пропадет
+            initVideo(_uiState.value.videoId, player, isReload = true)
+        }
+    }
+
+    fun reloadAndClearSubtitles() {
+        viewModelScope.launch {
+            // Удаляем всё из базы для этого видео
+            repo.deleteSubtitlesForVideo(_uiState.value.videoId)
+            // isReload = true: Экран остается на месте, плеер просто перегрузит чанки
+            exoPlayer?.let { player ->
+                initVideo(_uiState.value.videoId, player, isReload = true)
             }
         }
     }
@@ -137,10 +200,7 @@ class YoutubeDetailViewModel : ViewModel() {
         if (_uiState.value.translationMode == mode) return
 
         viewModelScope.launch {
-            // МГНОВЕННОЕ ПЕРЕКЛЮЧЕНИЕ!
-            // Мы больше не удаляем базу и не перезапускаем ExoPlayer (initVideo).
             _uiState.value = _uiState.value.copy(translationMode = mode)
-
             if (mode != TranslationMode.YOUTUBE_NATIVE) {
                 triggerLocalTranslation()
             }
@@ -200,7 +260,6 @@ class YoutubeDetailViewModel : ViewModel() {
         viewModelScope.launch {
             val meta = state.wordMeta[normalized] ?: WordMeta(UiWordStatus.BLUE)
             if (meta.status == UiWordStatus.BLUE || meta.status == UiWordStatus.TRANSPARENT) {
-                // ИСПРАВЛЕНИЕ: Передаем реальный язык видео вместо "en"
                 val trans = vocabRepo.fetchTranslation(normalized, state.sourceLang)
                 _uiState.value = state.copy(popupState = PopupState.NewWord(normalized, trans, contextSentence))
             } else {

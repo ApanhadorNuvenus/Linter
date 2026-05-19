@@ -1,4 +1,3 @@
-// ФАЙЛ: domain/model/YoutubeModels.kt
 package com.example.linter.domain.model
 
 data class YoutubeVideo(
@@ -16,8 +15,8 @@ data class SubtitleBlock(
     val endTimeMs: Long,
     val sourceText: String,
     val translatedText: String? = null,
-    val mlKitTranslatedText: String? = null, // НОВОЕ
-    val onnxTranslatedText: String? = null   // НОВОЕ
+    val mlKitTranslatedText: String? = null,
+    val onnxTranslatedText: String? = null
 )
 
 enum class TranslationMode(val title: String) {
@@ -31,5 +30,6 @@ data class VideoPlaybackInfo(
     val audioUrl: String,
     val subtitles: List<SubtitleBlock>,
     val hasYoutubeTranslation: Boolean,
-    val sourceLang: String
+    val sourceLang: String,
+    val availableQualities: List<String> // НОВОЕ: Список доступных разрешений
 )
