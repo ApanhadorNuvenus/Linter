@@ -7,6 +7,7 @@ import com.example.linter.data.local.entity.SubtitleBlockEntity_
 import com.example.linter.data.local.entity.YoutubeVideoEntity
 import com.example.linter.domain.model.SubtitleBlock
 import com.example.linter.domain.model.TextTranslator
+import com.example.linter.domain.model.TranslationMode
 import com.example.linter.domain.model.VideoPlaybackInfo
 import com.example.linter.domain.model.YoutubeVideo
 import com.example.linter.domain.repository.YoutubeRepository
@@ -20,7 +21,8 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 class YoutubeRepositoryImpl(
-    private val translator: TextTranslator
+    private val mlKitTranslator: TextTranslator,
+    private val onnxTranslator: TextTranslator
 ) : YoutubeRepository {
 
     private val videoBox get() = ObjectBox.store.boxFor(YoutubeVideoEntity::class.java)
@@ -148,7 +150,7 @@ class YoutubeRepositoryImpl(
             if (cachedEntities.isNotEmpty()) {
                 Log.i(TAG, "🟢 [SUBTITLE_SOURCE] ВЗЯТО ИЗ КЭША (ObjectBox). Загружено ${cachedEntities.size} блоков.")
                 val domainBlocks = cachedEntities.map {
-                    SubtitleBlock(it.id, it.startTimeMs, it.endTimeMs, it.sourceText, it.translatedText)
+                    SubtitleBlock(it.id, it.startTimeMs, it.endTimeMs, it.sourceText, it.translatedText, it.mlKitTranslatedText, it.onnxTranslatedText)
                 }.sortedBy { it.startTimeMs }
 
                 return@withContext Result.success(VideoPlaybackInfo(videoStream.url.toString(),
@@ -219,7 +221,7 @@ class YoutubeRepositoryImpl(
             subtitleBox.put(entitiesToSave)
 
             val savedBlocks = subtitleBox.query(SubtitleBlockEntity_.youtubeVideoId.equal(videoId)).build().find()
-                .map { SubtitleBlock(it.id, it.startTimeMs, it.endTimeMs, it.sourceText, it.translatedText) }
+                .map { SubtitleBlock(it.id, it.startTimeMs, it.endTimeMs, it.sourceText, it.translatedText, it.mlKitTranslatedText, it.onnxTranslatedText) }
                 .sortedBy { it.startTimeMs }
 
             Result.success(
@@ -238,25 +240,38 @@ class YoutubeRepositoryImpl(
     }
 
     // ИЗМЕНЕНИЕ: Добавлен sourceLang, и он передается в translator
-    override suspend fun translateAndSaveBlockLocally(block: SubtitleBlock, sourceLang: String): SubtitleBlock = withContext(Dispatchers.IO) {
-        val translation = translator.translate(block.sourceText, sourceLang, "ru").getOrNull()
-        val updatedBlock = block.copy(translatedText = translation ?: "Ошибка перевода")
+    override suspend fun translateAndSaveBlockLocally(block: SubtitleBlock, sourceLang: String, mode: TranslationMode): SubtitleBlock = withContext(Dispatchers.IO) {
+        val activeTranslator = if (mode == TranslationMode.ADVANCED_ONNX) onnxTranslator else mlKitTranslator
+
+        val translation = activeTranslator.translate(block.sourceText, sourceLang, "ru").getOrNull()
+
+        val updatedBlock = if (mode == TranslationMode.ADVANCED_ONNX) {
+            block.copy(onnxTranslatedText = translation ?: "Ошибка перевода")
+        } else {
+            block.copy(mlKitTranslatedText = translation ?: "Ошибка перевода")
+        }
 
         val entity = subtitleBox.get(block.id)
         if (entity != null) {
-            entity.translatedText = updatedBlock.translatedText
+            if (mode == TranslationMode.ADVANCED_ONNX) {
+                entity.onnxTranslatedText = updatedBlock.onnxTranslatedText
+            } else {
+                entity.mlKitTranslatedText = updatedBlock.mlKitTranslatedText
+            }
             subtitleBox.put(entity)
         }
         updatedBlock
     }
+    // МЕТОД clearTranslationsForVideo УДАЛЕН!
 
-    override suspend fun clearTranslationsForVideo(videoId: Long) {
-        withContext(Dispatchers.IO) {
-            val blocks = subtitleBox.query(SubtitleBlockEntity_.youtubeVideoId.equal(videoId)).build().find()
-            blocks.forEach { it.translatedText = null }
-            subtitleBox.put(blocks)
-        }
-    }
+//    DEPRECHATED
+//    override suspend fun clearTranslationsForVideo(videoId: Long) {
+//        withContext(Dispatchers.IO) {
+//            val blocks = subtitleBox.query(SubtitleBlockEntity_.youtubeVideoId.equal(videoId)).build().find()
+//            blocks.forEach { it.translatedText = null }
+//            subtitleBox.put(blocks)
+//        }
+//    }
 
     // =======================================================================
     // СМАРТ-ЧАНКИНГ (СИНТАКСИЧЕСКОЕ РАЗБИЕНИЕ)

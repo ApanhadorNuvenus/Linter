@@ -1,6 +1,7 @@
 package com.example.linter.domain.repository
 
 import com.example.linter.domain.model.SubtitleBlock
+import com.example.linter.domain.model.TranslationMode
 import com.example.linter.domain.model.YoutubeVideo
 import com.example.linter.domain.model.VideoPlaybackInfo
 
@@ -13,6 +14,6 @@ interface YoutubeRepository {
 
     suspend fun fetchPlaybackInfo(videoId: Long, url: String): Result<VideoPlaybackInfo>
 
-    suspend fun translateAndSaveBlockLocally(block: SubtitleBlock, sourceLang: String): SubtitleBlock
-    suspend fun clearTranslationsForVideo(videoId: Long) // НОВОЕ: Для смены режима
+    suspend fun translateAndSaveBlockLocally(block: SubtitleBlock, sourceLang: String, mode: TranslationMode): SubtitleBlock
+//    suspend fun clearTranslationsForVideo(videoId: Long) // НОВОЕ: Для смены режима
 }

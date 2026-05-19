@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.example.linter.domain.model.TranslationMode
@@ -31,6 +32,7 @@ import com.example.linter.presentation.ui.components.WordPopup
 import com.example.linter.presentation.ui.lecturedetail.PopupState
 import kotlinx.coroutines.launch
 
+@androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun YoutubeDetailScreen(
@@ -190,8 +192,15 @@ fun YoutubeDetailScreen(
 
                             Spacer(modifier = Modifier.height(6.dp))
 
+                            // ИЗМЕНЕНИЕ: Динамически выбираем, какой перевод показывать
+                            val displayedTranslation = when (state.translationMode) {
+                                TranslationMode.YOUTUBE_NATIVE -> block.translatedText ?: ""
+                                TranslationMode.LOCAL_ML_KIT -> block.mlKitTranslatedText ?: "Перевод (ML Kit)..."
+                                TranslationMode.ADVANCED_ONNX -> block.onnxTranslatedText ?: "Перевод (ONNX)..."
+                            }
+
                             Text(
-                                text = block.translatedText ?: if (state.translationMode == TranslationMode.LOCAL_ML_KIT) "Перевод..." else "",
+                                text = displayedTranslation,
                                 color = Color.Gray,
                                 fontSize = 16.sp,
                                 textAlign = TextAlign.Center
@@ -222,21 +231,28 @@ fun YoutubeDetailScreen(
                     Text("Режим перевода", style = MaterialTheme.typography.titleLarge)
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(
-                            selected = state.translationMode == TranslationMode.YOUTUBE_NATIVE,
-                            onClick = { viewModel.setTranslationMode(TranslationMode.YOUTUBE_NATIVE) },
-                            enabled = state.hasYoutubeTranslation
-                        )
-                        Text("Перевод YouTube (только если есть)", color = if (state.hasYoutubeTranslation) Color.Unspecified else Color.Gray)
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(
-                            selected = state.translationMode == TranslationMode.LOCAL_ML_KIT,
-                            onClick = { viewModel.setTranslationMode(TranslationMode.LOCAL_ML_KIT) }
-                        )
-                        Text("Локальный ML Kit (Офлайн)")
+                    TranslationMode.entries.forEach { mode ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                // Блокируем опцию YouTube_Native, если YouTube перевода нет
+                                .clickable(enabled = mode != TranslationMode.YOUTUBE_NATIVE || state.hasYoutubeTranslation) {
+                                    viewModel.setTranslationMode(mode)
+                                }
+                                .padding(vertical = 4.dp)
+                        ) {
+                            RadioButton(
+                                selected = state.translationMode == mode,
+                                onClick = { viewModel.setTranslationMode(mode) },
+                                enabled = mode != TranslationMode.YOUTUBE_NATIVE || state.hasYoutubeTranslation
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = mode.title,
+                                color = if (mode == TranslationMode.YOUTUBE_NATIVE && !state.hasYoutubeTranslation) Color.Gray else Color.Unspecified
+                            )
+                        }
                     }
                     Spacer(modifier = Modifier.height(32.dp))
                 }

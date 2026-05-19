@@ -44,8 +44,8 @@ data class YoutubeDetailState(
 )
 
 class YoutubeDetailViewModel : ViewModel() {
-    private val repo = AppModule.youtubeRepository
-    private val vocabRepo = AppModule.vocabularyRepository
+        private val repo = AppModule.youtubeRepository
+        private val vocabRepo = AppModule.vocabularyRepository
     private val tokenizer = AndroidBreakIteratorTokenizer()
 
     private val _uiState = MutableStateFlow(YoutubeDetailState())
@@ -137,18 +137,12 @@ class YoutubeDetailViewModel : ViewModel() {
         if (_uiState.value.translationMode == mode) return
 
         viewModelScope.launch {
-            repo.clearTranslationsForVideo(_uiState.value.videoId)
-            val clearedBlocks = _uiState.value.subtitles.map { it.copy(translatedText = null) }
+            // МГНОВЕННОЕ ПЕРЕКЛЮЧЕНИЕ!
+            // Мы больше не удаляем базу и не перезапускаем ExoPlayer (initVideo).
+            _uiState.value = _uiState.value.copy(translationMode = mode)
 
-            _uiState.value = _uiState.value.copy(
-                translationMode = mode,
-                subtitles = clearedBlocks
-            )
-
-            if (mode == TranslationMode.LOCAL_ML_KIT) {
+            if (mode != TranslationMode.YOUTUBE_NATIVE) {
                 triggerLocalTranslation()
-            } else {
-                initVideo(_uiState.value.videoId, exoPlayer!!)
             }
         }
     }
@@ -156,28 +150,40 @@ class YoutubeDetailViewModel : ViewModel() {
     private fun triggerLocalTranslation() {
         translateJob?.cancel()
         translateJob = viewModelScope.launch(Dispatchers.Default) {
-            while (isActive && _uiState.value.translationMode == TranslationMode.LOCAL_ML_KIT) {
+            while (isActive && _uiState.value.translationMode != TranslationMode.YOUTUBE_NATIVE) {
                 val state = _uiState.value
                 val blocks = state.subtitles
                 val currentIndex = maxOf(0, state.currentBlockIndex)
                 var targetIndex = -1
 
+                val isOnnx = state.translationMode == TranslationMode.ADVANCED_ONNX
+
                 for (offset in 0..blocks.size) {
                     val forwardIndex = currentIndex + offset
                     val backwardIndex = currentIndex - offset
 
-                    if (forwardIndex in blocks.indices && blocks[forwardIndex].translatedText == null) {
-                        targetIndex = forwardIndex
-                        break
+                    if (forwardIndex in blocks.indices) {
+                        val needsTranslation = if (isOnnx) blocks[forwardIndex].onnxTranslatedText == null else blocks[forwardIndex].mlKitTranslatedText == null
+                        if (needsTranslation) {
+                            targetIndex = forwardIndex
+                            break
+                        }
                     }
-                    if (backwardIndex in blocks.indices && blocks[backwardIndex].translatedText == null) {
-                        targetIndex = backwardIndex
-                        break
+                    if (backwardIndex in blocks.indices) {
+                        val needsTranslation = if (isOnnx) blocks[backwardIndex].onnxTranslatedText == null else blocks[backwardIndex].mlKitTranslatedText == null
+                        if (needsTranslation) {
+                            targetIndex = backwardIndex
+                            break
+                        }
                     }
                 }
 
                 if (targetIndex != -1) {
-                    val translatedBlock = repo.translateAndSaveBlockLocally(blocks[targetIndex], state.sourceLang)
+                    val translatedBlock = repo.translateAndSaveBlockLocally(
+                        block = blocks[targetIndex],
+                        sourceLang = state.sourceLang,
+                        mode = state.translationMode
+                    )
                     val newBlocks = _uiState.value.subtitles.toMutableList()
                     newBlocks[targetIndex] = translatedBlock
                     _uiState.value = _uiState.value.copy(subtitles = newBlocks)
