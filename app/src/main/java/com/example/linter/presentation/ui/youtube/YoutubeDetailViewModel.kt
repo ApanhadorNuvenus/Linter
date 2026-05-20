@@ -310,6 +310,15 @@ class YoutubeDetailViewModel : ViewModel() {
         _uiState.value = _uiState.value.copy(wordMeta = updatedMeta)
     }
 
+
+    fun onSaveCustomTranslation(cardId: Long, word: String, customTranslation: String) {
+        viewModelScope.launch {
+            vocabRepo.updateCustomTranslation(cardId, customTranslation)
+            refreshWordState(word)
+        }
+    }
+
+
     fun dismissPopup() {
         _uiState.value = _uiState.value.copy(popupState = PopupState.Hidden)
     }

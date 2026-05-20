@@ -23,5 +23,6 @@ data class ContextCardEntity(
     var translation: String = "", // ML Kit (Основной, для совместимости со старой базой)
     var translationOnnx: String? = null,   // НОВОЕ
     var translationCloud: String? = null,  // НОВОЕ
+    var translationCustom: String? = null,
     var status: Int = 1
 )

@@ -276,6 +276,13 @@ class LectureDetailViewModel : ViewModel() {
         }
     }
 
+    fun onSaveCustomTranslation(cardId: Long, word: String, customTranslation: String) {
+        viewModelScope.launch {
+            vocabularyRepository.updateCustomTranslation(cardId, customTranslation)
+            refreshWordState(word)
+        }
+    }
+
     fun dismissEndOfPageDialog() {
         _uiState.value = _uiState.value.copy(showEndOfPageDialog = false, pendingAction = null)
     }

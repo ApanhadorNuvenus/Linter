@@ -258,6 +258,15 @@ class ReviewViewModel : ViewModel() {
         _uiState.value = state.copy(queue = newQueue, currentItem = updatedItem)
     }
 
+
+    fun onSaveCustomTranslation(cardId: Long, word: String, customTranslation: String) {
+        viewModelScope.launch {
+            vocabularyRepository.updateCustomTranslation(cardId, customTranslation)
+            refreshCurrentCard()
+        }
+    }
+
+
     fun dismissPopup() {
         _uiState.value = _uiState.value.copy(popupState = PopupState.Hidden, selectionRange = null)
     }

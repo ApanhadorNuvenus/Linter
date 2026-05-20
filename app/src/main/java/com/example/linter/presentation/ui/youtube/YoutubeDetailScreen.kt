@@ -286,7 +286,8 @@ fun YoutubeDetailScreen(
                 onMarkAsKnown = { word, cardId -> viewModel.onMarkAsKnown(word, cardId) },
                 onMarkAsIgnored = { word -> viewModel.onMarkAsIgnored(word) },
                 onChangeLearningStatus = { cardId, word, lStatus -> viewModel.onChangeLearningStatus(cardId, word, lStatus) },
-                onDismiss = { viewModel.dismissPopup() }
+                onDismiss = { viewModel.dismissPopup() },
+                onSaveCustomTranslation = { cardId, word, translation -> viewModel.onSaveCustomTranslation(cardId, word, translation) }
             )
         }
 

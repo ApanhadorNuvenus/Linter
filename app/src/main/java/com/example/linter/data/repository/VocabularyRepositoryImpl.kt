@@ -31,11 +31,9 @@ class VocabularyRepositoryImpl(
 
         val result = mutableMapOf<String, WordMeta>()
 
-        // Optimization: Single batch query to find all vocab items at once
         val vocabItems = vocabBox.query(VocabularyItemEntity_.text.oneOf(uniqueWords.toTypedArray())).build().find()
         val vocabMap = vocabItems.associateBy { it.text }
 
-        // Optimization: Single batch query to find all cards associated with these vocab items
         val vocabItemIds = vocabItems.map { it.id }.toLongArray()
         val activeCards = if (vocabItemIds.isNotEmpty()) {
             cardBox.query(ContextCardEntity_.vocabularyItemId.oneOf(vocabItemIds)).build().find()
@@ -60,7 +58,12 @@ class VocabularyRepositoryImpl(
                 result[word] = WordMeta(
                     status = UiWordStatus.YELLOW,
                     learningStatus = LearningStatus.fromLevel(activeCard.status),
-                    translations = MultiTranslation(activeCard.translation, activeCard.translationOnnx, activeCard.translationCloud),
+                    translations = MultiTranslation(
+                        mlKit = activeCard.translation,
+                        onnx = activeCard.translationOnnx,
+                        cloud = activeCard.translationCloud,
+                        custom = activeCard.translationCustom // Чтение кастомного перевода
+                    ),
                     contextCardId = activeCard.id
                 )
             } else {
@@ -71,7 +74,6 @@ class VocabularyRepositoryImpl(
     }
 
     override suspend fun getLearningPhrasesMetas(): List<Pair<String, WordMeta>> = withContext(Dispatchers.IO) {
-        // Query only what we need instead of pulling 'cardBox.all'
         val phraseCards = cardBox.all
         if (phraseCards.isEmpty()) return@withContext emptyList()
 
@@ -87,7 +89,12 @@ class VocabularyRepositoryImpl(
                     vocabItem.text to WordMeta(
                         status = UiWordStatus.YELLOW,
                         learningStatus = LearningStatus.fromLevel(card.status),
-                        translations = MultiTranslation(card.translation, card.translationOnnx, card.translationCloud),
+                        translations = MultiTranslation(
+                            mlKit = card.translation,
+                            onnx = card.translationOnnx,
+                            cloud = card.translationCloud,
+                            custom = card.translationCustom // Чтение кастомного перевода
+                        ),
                         contextCardId = card.id
                     )
                 )
@@ -109,7 +116,8 @@ class VocabularyRepositoryImpl(
         MultiTranslation(
             mlKit = mlDeferred?.await()?.getOrNull(),
             onnx = onnxDeferred?.await()?.getOrNull(),
-            cloud = cloudDeferred?.await()?.getOrNull()
+            cloud = cloudDeferred?.await()?.getOrNull(),
+            custom = null
         )
     }
 
@@ -151,6 +159,7 @@ class VocabularyRepositoryImpl(
                 translation = translations.mlKit ?: "",
                 translationOnnx = translations.onnx,
                 translationCloud = translations.cloud,
+                translationCustom = translations.custom, // Запись кастомного перевода
                 status = status.level
             )
             val contextCardId = cardBox.put(card)
@@ -181,6 +190,14 @@ class VocabularyRepositoryImpl(
         withContext(Dispatchers.IO) {
             cardBox.remove(cardId)
             markAsKnown(word)
+        }
+    }
+
+    override suspend fun updateCustomTranslation(cardId: Long, customTranslation: String?) {
+        withContext(Dispatchers.IO) {
+            val card = cardBox[cardId] ?: return@withContext
+            card.translationCustom = customTranslation?.trim()?.takeIf { it.isNotBlank() }
+            cardBox.put(card)
         }
     }
 }

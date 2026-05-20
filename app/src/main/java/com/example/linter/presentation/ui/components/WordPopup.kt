@@ -7,6 +7,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -91,9 +94,21 @@ fun WordPopup(
     onMarkAsKnown: (word: String, cardId: Long?) -> Unit,
     onMarkAsIgnored: (word: String) -> Unit,
     onChangeLearningStatus: (cardId: Long, word: String, status: LearningStatus) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    // Добавлен новый коллбек с дефолтным пустым значением:
+    onSaveCustomTranslation: (cardId: Long, word: String, translation: String) -> Unit = { _, _, _ -> }
 ) {
     if (state is PopupState.Hidden) return
+
+    // Локальные состояния редактирования своего перевода
+    var isEditingCustom by remember { mutableStateOf(false) }
+    var customInput by remember { mutableStateOf("") }
+
+    // Сбрасываем режим редактирования при изменении состояния попапа
+    LaunchedEffect(state) {
+        isEditingCustom = false
+        customInput = ""
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -132,6 +147,45 @@ fun WordPopup(
                 // Контекст / Переводы
                 when (state) {
                     is PopupState.NewWord -> {
+                        // Поле ввода своего перевода для новой карточки
+                        if (isEditingCustom) {
+                            OutlinedTextField(
+                                value = customInput,
+                                onValueChange = { customInput = it },
+                                label = { Text("Свой перевод") },
+                                placeholder = { Text("Введите перевод слова...") },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                trailingIcon = {
+                                    IconButton(onClick = { isEditingCustom = false }) {
+                                        Icon(Icons.Default.Check, contentDescription = "Done")
+                                    }
+                                }
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                        } else {
+                            if (customInput.isNotBlank()) {
+                                TranslationCard(
+                                    title = "Ваш перевод (Черновик)",
+                                    text = customInput,
+                                    icon = "✍️",
+                                    accentColor = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                            } else {
+                                OutlinedButton(
+                                    onClick = { isEditingCustom = true },
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Добавить свой перевод")
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+                        }
+
                         MultiTranslationView(state.translations)
                         Spacer(modifier = Modifier.height(16.dp))
 
@@ -159,6 +213,70 @@ fun WordPopup(
                         }
                     }
                     is PopupState.LearningWord -> {
+                        val savedCustom = state.meta.translations?.custom
+
+                        // Редактор своего перевода для уже сохраненной карточки
+                        if (isEditingCustom) {
+                            OutlinedTextField(
+                                value = customInput,
+                                onValueChange = { customInput = it },
+                                label = { Text("Свой перевод") },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                trailingIcon = {
+                                    IconButton(
+                                        onClick = {
+                                            onSaveCustomTranslation(state.meta.contextCardId!!, state.wordOrPhrase, customInput)
+                                            isEditingCustom = false
+                                        }
+                                    ) {
+                                        Icon(Icons.Default.Check, contentDescription = "Save")
+                                    }
+                                }
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                        } else {
+                            if (!savedCustom.isNullOrBlank()) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(modifier = Modifier.weight(1f)) {
+                                        TranslationCard(
+                                            title = "Ваш перевод",
+                                            text = savedCustom,
+                                            icon = "✍️",
+                                            accentColor = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            customInput = savedCustom
+                                            isEditingCustom = true
+                                        }
+                                    ) {
+                                        Icon(Icons.Default.Edit, contentDescription = "Edit")
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                            } else {
+                                OutlinedButton(
+                                    onClick = {
+                                        customInput = ""
+                                        isEditingCustom = true
+                                    },
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Добавить свой перевод")
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+                        }
+
                         state.meta.translations?.let { MultiTranslationView(it) }
                         Spacer(modifier = Modifier.height(20.dp))
 
@@ -234,7 +352,14 @@ fun WordPopup(
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                         Button(
-                            onClick = { onStartLearning(state.wordOrPhrase, state.translations, state.contextSentence) },
+                            onClick = {
+                                val finalTranslations = if (customInput.isNotBlank()) {
+                                    state.translations.copy(custom = customInput.trim())
+                                } else {
+                                    state.translations
+                                }
+                                onStartLearning(state.wordOrPhrase, finalTranslations, state.contextSentence)
+                            },
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Text("Learn")

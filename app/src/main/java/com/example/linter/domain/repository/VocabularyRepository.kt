@@ -11,6 +11,7 @@ interface VocabularyRepository {
 
     // ИЗМЕНЕНИЕ: Возвращает MultiTranslation
     suspend fun fetchMultiTranslations(wordOrPhrase: String, sourceLang: String): MultiTranslation
+    suspend fun updateCustomTranslation(cardId: Long, customTranslation: String?)
 
     suspend fun markAsKnown(word: String)
     suspend fun markAsIgnored(word: String)
