@@ -22,6 +22,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.linter.domain.model.UiWordStatus
 import com.example.linter.domain.repository.ReviewItem
 import com.example.linter.presentation.ui.components.WordPopup
+import com.example.linter.presentation.ui.components.MultiTranslationView // ИМПОРТ ДОБАВЛЕН
 import com.example.linter.presentation.ui.lecturedetail.PopupState
 import kotlin.math.max
 import kotlin.math.min
@@ -208,12 +209,16 @@ fun ReviewCard(
 
         Spacer(modifier = Modifier.height(32.dp))
         Text(text = item.word, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Black)
-        Spacer(modifier = Modifier.height(48.dp))
+        Spacer(modifier = Modifier.height(32.dp))
 
         if (showAnswer) {
             HorizontalDivider(modifier = Modifier.fillMaxWidth(0.8f))
-            Spacer(modifier = Modifier.height(32.dp))
-            Text(text = item.translation, style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.secondary)
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // ИЗМЕНЕНИЕ: Отображаем красивые карточки с мульти-переводом вместо одной строчки
+            Box(modifier = Modifier.fillMaxWidth(0.9f)) {
+                MultiTranslationView(translations = item.translations)
+            }
         }
 
         Spacer(modifier = Modifier.weight(1.5f))

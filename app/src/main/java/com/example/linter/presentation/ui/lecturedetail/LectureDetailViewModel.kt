@@ -8,6 +8,7 @@ import com.example.linter.domain.model.LearningStatus
 import com.example.linter.domain.model.Token
 import com.example.linter.domain.model.UiWordStatus
 import com.example.linter.domain.model.WordMeta
+import com.example.linter.domain.model.MultiTranslation // НОВОЕ
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,7 +24,8 @@ sealed class PageAction {
 
 sealed class PopupState {
     object Hidden : PopupState()
-    data class NewWord(val wordOrPhrase: String, val translation: String, val contextSentence: String) : PopupState()
+    // ИЗМЕНЕНИЕ: Теперь здесь передается MultiTranslation
+    data class NewWord(val wordOrPhrase: String, val translations: MultiTranslation, val contextSentence: String) : PopupState()
     data class LearningWord(val wordOrPhrase: String, val meta: WordMeta, val contextSentence: String) : PopupState()
 }
 
@@ -155,7 +157,8 @@ class LectureDetailViewModel : ViewModel() {
             }
 
             if (meta.status == UiWordStatus.BLUE || meta.status == UiWordStatus.TRANSPARENT) {
-                val trans = vocabularyRepository.fetchTranslation(wordOrPhrase, state.language)
+                // ИЗМЕНЕНИЕ: Используем fetchMultiTranslations
+                val trans = vocabularyRepository.fetchMultiTranslations(wordOrPhrase, state.language)
                 _uiState.value = state.copy(popupState = PopupState.NewWord(wordOrPhrase, trans, contextSentence))
             } else {
                 _uiState.value = state.copy(popupState = PopupState.LearningWord(wordOrPhrase, meta, contextSentence))
@@ -163,11 +166,11 @@ class LectureDetailViewModel : ViewModel() {
         }
     }
 
-    fun onStartLearning(word: String, translation: String, contextSentence: String) {
+    // ИЗМЕНЕНИЕ: Принимаем MultiTranslation
+    fun onStartLearning(word: String, translations: MultiTranslation, contextSentence: String) {
         val state = _uiState.value
         viewModelScope.launch {
-            // ИЗМЕНЕНИЕ: передаем 0L как youtubeVideoId
-            vocabularyRepository.createLearningCard(word, state.lectureId, 0L, contextSentence, translation, LearningStatus.NEW)
+            vocabularyRepository.createLearningCard(word, state.lectureId, 0L, contextSentence, translations, LearningStatus.NEW)
             refreshWordState(word)
             dismissPopup()
         }
@@ -253,8 +256,8 @@ class LectureDetailViewModel : ViewModel() {
                 if (selectedAsLearning.contains(word)) {
                     val token = state.tokens.find { it.value.lowercase() == word }
                     val context = if (token != null) extractSentence(state.text, token.startIndex) else ""
-                    val trans = vocabularyRepository.fetchTranslation(word, state.language)
-                    // ИЗМЕНЕНИЕ: передаем 0L как youtubeVideoId
+                    // ИЗМЕНЕНИЕ: Используем fetchMultiTranslations
+                    val trans = vocabularyRepository.fetchMultiTranslations(word, state.language)
                     vocabularyRepository.createLearningCard(word, state.lectureId, 0L, context, trans, LearningStatus.NEW)
                 } else {
                     vocabularyRepository.markAsKnown(word)

@@ -2,6 +2,7 @@ package com.example.linter.domain.repository
 
 import com.example.linter.data.fsrs.FlashCard
 import com.example.linter.data.fsrs.Grade
+import com.example.linter.domain.model.MultiTranslation
 import com.example.linter.domain.model.Token
 import com.example.linter.domain.model.WordMeta
 
@@ -10,7 +11,7 @@ data class ReviewItem(
     val contextCardId: Long,
     val word: String,
     val contextSentence: String,
-    val translation: String,
+    val translations: MultiTranslation,
     val fsrsCard: FlashCard,
     val grades: List<Grade>,
     // Добавлены поля для живого текста:

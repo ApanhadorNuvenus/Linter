@@ -7,6 +7,7 @@ import com.example.linter.data.fsrs.Grade
 import com.example.linter.data.local.ObjectBox
 import com.example.linter.data.local.entity.FlashCardEntity_
 import com.example.linter.domain.model.LearningStatus
+import com.example.linter.domain.model.MultiTranslation
 import com.example.linter.domain.model.WordMeta
 import com.example.linter.domain.model.TextTokenizer
 import com.example.linter.domain.repository.ReviewItem
@@ -91,7 +92,7 @@ class ReviewRepositoryImpl(
                     contextCardId = contextCard.id,
                     word = vocabItem.text,
                     contextSentence = contextCard.contextSentence,
-                    translation = contextCard.translation,
+                    translations = MultiTranslation(contextCard.translation, contextCard.translationOnnx, contextCard.translationCloud),
                     fsrsCard = fsrsCard,
                     grades = grades,
                     tokens = tokens,

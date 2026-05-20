@@ -260,17 +260,20 @@ class YoutubeDetailViewModel : ViewModel() {
         viewModelScope.launch {
             val meta = state.wordMeta[normalized] ?: WordMeta(UiWordStatus.BLUE)
             if (meta.status == UiWordStatus.BLUE || meta.status == UiWordStatus.TRANSPARENT) {
-                val trans = vocabRepo.fetchTranslation(normalized, state.sourceLang)
-                _uiState.value = state.copy(popupState = PopupState.NewWord(normalized, trans, contextSentence))
+                // ИЗМЕНЕНИЕ: Используем fetchMultiTranslations
+                val trans = vocabRepo.fetchMultiTranslations(normalized, state.sourceLang)
+                _uiState.value = state.copy(popupState = PopupState.NewWord(normalized,
+                    trans, contextSentence))
             } else {
                 _uiState.value = state.copy(popupState = PopupState.LearningWord(normalized, meta, contextSentence))
             }
         }
     }
 
-    fun onStartLearning(word: String, translation: String, contextSentence: String) {
+    // ИЗМЕНЕНИЕ: Принимаем MultiTranslation
+    fun onStartLearning(word: String, translations: MultiTranslation, contextSentence: String) {
         viewModelScope.launch {
-            vocabRepo.createLearningCard(word, 0L, _uiState.value.videoId, contextSentence, translation, LearningStatus.NEW)
+            vocabRepo.createLearningCard(word, 0L, _uiState.value.videoId, contextSentence, translations, LearningStatus.NEW)
             refreshWordState(word)
             dismissPopup()
         }

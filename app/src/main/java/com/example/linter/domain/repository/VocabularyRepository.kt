@@ -1,30 +1,24 @@
 package com.example.linter.domain.repository
 
 import com.example.linter.domain.model.LearningStatus
+import com.example.linter.domain.model.MultiTranslation
 import com.example.linter.domain.model.WordMeta
 
-interface VocabularyRepository {
-    // Получить состояние слов для UI
-    suspend fun getWordMetas(words: List<String>): Map<String, WordMeta>
 
-    // Получить все желтые фразы (для подсветки фраз в тексте)
+interface VocabularyRepository {
+    suspend fun getWordMetas(words: List<String>): Map<String, WordMeta>
     suspend fun getLearningPhrasesMetas(): List<Pair<String, WordMeta>>
 
-    // Перевод "на лету" без сохранения
-    suspend fun fetchTranslation(wordOrPhrase: String, sourceLang: String): String
+    // ИЗМЕНЕНИЕ: Возвращает MultiTranslation
+    suspend fun fetchMultiTranslations(wordOrPhrase: String, sourceLang: String): MultiTranslation
 
-    // Действия пользователя
     suspend fun markAsKnown(word: String)
     suspend fun markAsIgnored(word: String)
 
-    // ИЗМЕНЕНИЕ: Добавлен youtubeVideoId: Long = 0L
+    // ИЗМЕНЕНИЕ: Принимает MultiTranslation
     suspend fun createLearningCard(
-        word: String,
-        lectureId: Long,
-        youtubeVideoId: Long = 0L,
-        contextSentence: String,
-        translation: String,
-        status: LearningStatus
+        word: String, lectureId: Long, youtubeVideoId: Long = 0L,
+        contextSentence: String, translations: MultiTranslation, status: LearningStatus
     )
 
     suspend fun updateCardStatus(cardId: Long, newStatus: LearningStatus)

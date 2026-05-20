@@ -1,5 +1,6 @@
 package com.example.linter.data.repository
 
+import android.content.Context
 import com.example.linter.data.local.ObjectBox
 import com.example.linter.data.local.entity.ContextCardEntity
 import com.example.linter.data.local.entity.ContextCardEntity_
@@ -8,8 +9,12 @@ import com.example.linter.data.local.entity.VocabularyItemEntity_
 import com.example.linter.domain.model.LearningStatus
 import com.example.linter.domain.model.UiWordStatus
 import com.example.linter.domain.model.WordMeta
+import com.example.linter.domain.model.MultiTranslation
 import com.example.linter.domain.repository.VocabularyRepository
 import com.example.linter.domain.model.TextTranslator
+import com.example.linter.di.AppModule
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 
 class VocabularyRepositoryImpl(
     private val translator: TextTranslator
@@ -24,24 +29,14 @@ class VocabularyRepositoryImpl(
 
         for (word in uniqueWords) {
             val vocabItem = vocabBox.query(VocabularyItemEntity_.text.equal(word)).build().findFirst()
+            if (vocabItem == null) { result[word] = WordMeta(status = UiWordStatus.BLUE); continue }
+            if (vocabItem.isKnown || vocabItem.isIgnored) { result[word] = WordMeta(status = UiWordStatus.TRANSPARENT); continue }
 
-            if (vocabItem == null) {
-                result[word] = WordMeta(status = UiWordStatus.BLUE)
-                continue
-            }
-
-            if (vocabItem.isKnown || vocabItem.isIgnored) {
-                result[word] = WordMeta(status = UiWordStatus.TRANSPARENT)
-                continue
-            }
-
-            // Ищем активную карточку изучения
             val activeCard = cardBox.query(ContextCardEntity_.vocabularyItemId.equal(vocabItem.id)).build().findFirst()
             if (activeCard != null) {
                 result[word] = WordMeta(
-                    status = UiWordStatus.YELLOW,
-                    learningStatus = LearningStatus.fromLevel(activeCard.status),
-                    translation = activeCard.translation,
+                    status = UiWordStatus.YELLOW, learningStatus = LearningStatus.fromLevel(activeCard.status),
+                    translations = MultiTranslation(activeCard.translation, activeCard.translationOnnx, activeCard.translationCloud),
                     contextCardId = activeCard.id
                 )
             } else {
@@ -52,27 +47,38 @@ class VocabularyRepositoryImpl(
     }
 
     override suspend fun getLearningPhrasesMetas(): List<Pair<String, WordMeta>> {
-        val phraseCards = cardBox.all // В идеале тут нужен Join, но ObjectBox работает с этим в памяти быстро
+        val phraseCards = cardBox.all
         val result = mutableListOf<Pair<String, WordMeta>>()
-
         for (card in phraseCards) {
             val vocabItem = vocabBox[card.vocabularyItemId]
             if (vocabItem != null && vocabItem.text.contains(" ") && !vocabItem.isKnown && !vocabItem.isIgnored) {
-                result.add(
-                    vocabItem.text to WordMeta(
-                        status = UiWordStatus.YELLOW,
-                        learningStatus = LearningStatus.fromLevel(card.status),
-                        translation = card.translation,
-                        contextCardId = card.id
-                    )
-                )
+                result.add(vocabItem.text to WordMeta(
+                    status = UiWordStatus.YELLOW, learningStatus = LearningStatus.fromLevel(card.status),
+                    translations = MultiTranslation(card.translation, card.translationOnnx, card.translationCloud),
+                    contextCardId = card.id
+                ))
             }
         }
         return result
     }
 
-    override suspend fun fetchTranslation(wordOrPhrase: String, sourceLang: String): String {
-        return translator.translate(wordOrPhrase, sourceLang, "ru").getOrElse { "Ошибка перевода" }
+    override suspend fun fetchMultiTranslations(wordOrPhrase: String, sourceLang: String): MultiTranslation = coroutineScope {
+        // Читаем глобальные настройки отображения
+        val prefs = AppModule.context.getSharedPreferences("linter_settings", Context.MODE_PRIVATE)
+        val showMl = prefs.getBoolean("pref_show_ml_kit", true)
+        val showOnnx = prefs.getBoolean("pref_show_onnx", true)
+        val showCloud = prefs.getBoolean("pref_show_cloud", true)
+
+        // Запрашиваем только то, что включил пользователь
+        val mlDeferred = if (showMl) async { translator.translate(wordOrPhrase, sourceLang, "ru") } else null
+        val onnxDeferred = if (showOnnx) async { AppModule.onnxTranslator.translate(wordOrPhrase, sourceLang, "ru") } else null
+        val cloudDeferred = if (showCloud) async { AppModule.cloudTranslator.translate(wordOrPhrase, sourceLang, "ru") } else null
+
+        MultiTranslation(
+            mlKit = mlDeferred?.await()?.getOrNull(),
+            onnx = onnxDeferred?.await()?.getOrNull(),
+            cloud = cloudDeferred?.await()?.getOrNull()
+        )
     }
 
     private fun getOrCreateVocabItem(word: String): VocabularyItemEntity {
@@ -93,14 +99,9 @@ class VocabularyRepositoryImpl(
         vocabBox.put(item)
     }
 
-    // ИЗМЕНЕНИЕ: Добавлен youtubeVideoId и передан в ContextCardEntity
     override suspend fun createLearningCard(
-        word: String,
-        lectureId: Long,
-        youtubeVideoId: Long,
-        contextSentence: String,
-        translation: String,
-        status: LearningStatus
+        word: String, lectureId: Long, youtubeVideoId: Long,
+        contextSentence: String, translations: MultiTranslation, status: LearningStatus
     ) {
         val item = getOrCreateVocabItem(word)
         item.isKnown = false
@@ -108,16 +109,15 @@ class VocabularyRepositoryImpl(
         vocabBox.put(item)
 
         val card = ContextCardEntity(
-            vocabularyItemId = item.id,
-            lectureId = lectureId,
-            youtubeVideoId = youtubeVideoId, // Сохраняем ID видео, если оно есть
+            vocabularyItemId = item.id, lectureId = lectureId, youtubeVideoId = youtubeVideoId,
             contextSentence = contextSentence,
-            translation = translation,
+            translation = translations.mlKit ?: "", // Защита от null
+            translationOnnx = translations.onnx,
+            translationCloud = translations.cloud,
             status = status.level
         )
         val contextCardId = cardBox.put(card)
 
-        // Генерируем карточку FSRS (Due date = прямо сейчас, Phase = Added)
         val flashCard = com.example.linter.data.local.entity.FlashCardEntity(
             contextCardId = contextCardId,
             stability = 0.0,
@@ -138,7 +138,6 @@ class VocabularyRepositoryImpl(
     }
 
     override suspend fun moveCardToKnown(cardId: Long, word: String) {
-        // Архивируем/Удаляем карточку и отмечаем глобально
         cardBox.remove(cardId)
         markAsKnown(word)
     }

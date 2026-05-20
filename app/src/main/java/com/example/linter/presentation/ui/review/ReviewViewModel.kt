@@ -7,6 +7,7 @@ import com.example.linter.di.AppModule
 import com.example.linter.domain.model.LearningStatus
 import com.example.linter.domain.model.UiWordStatus
 import com.example.linter.domain.model.WordMeta
+import com.example.linter.domain.model.MultiTranslation // НОВОЕ
 import com.example.linter.domain.repository.ReviewItem
 import com.example.linter.presentation.ui.lecturedetail.PopupState
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -200,18 +201,20 @@ class ReviewViewModel : ViewModel() {
             }
 
             if (meta.status == UiWordStatus.BLUE || meta.status == UiWordStatus.TRANSPARENT) {
-                val trans = vocabularyRepository.fetchTranslation(word, "en")
-                _uiState.value = state.copy(popupState = PopupState.NewWord(word, trans, currentItem.contextSentence))
+                // ИЗМЕНЕНИЕ: Используем fetchMultiTranslations
+                val trans = vocabularyRepository.fetchMultiTranslations(word, "en")
+                _uiState.value = state.copy(popupState = PopupState.NewWord(word,
+                    trans, currentItem.contextSentence))
             } else {
                 _uiState.value = state.copy(popupState = PopupState.LearningWord(word, meta, currentItem.contextSentence))
             }
         }
     }
 
-    fun onStartLearning(word: String, translation: String, contextSentence: String) {
+    // ИЗМЕНЕНИЕ: Принимаем MultiTranslation
+    fun onStartLearning(word: String, translations: MultiTranslation, contextSentence: String) {
         viewModelScope.launch {
-            // ИЗМЕНЕНИЕ: передаем 0L как youtubeVideoId
-            vocabularyRepository.createLearningCard(word, 0L, 0L, contextSentence, translation, LearningStatus.NEW)
+            vocabularyRepository.createLearningCard(word, 0L, 0L, contextSentence, translations, LearningStatus.NEW)
             refreshCurrentCard()
             dismissPopup()
         }

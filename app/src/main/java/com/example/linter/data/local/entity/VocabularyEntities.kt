@@ -17,9 +17,11 @@ data class VocabularyItemEntity(
 data class ContextCardEntity(
     @Id var id: Long = 0,
     @Index var vocabularyItemId: Long = 0,
-    var lectureId: Long = 0, // 0 если это слово из видео
-    var youtubeVideoId: Long = 0, // НОВОЕ: 0 если это слово из лекции
+    var lectureId: Long = 0,
+    var youtubeVideoId: Long = 0,
     var contextSentence: String = "",
-    var translation: String = "",
+    var translation: String = "", // ML Kit (Основной, для совместимости со старой базой)
+    var translationOnnx: String? = null,   // НОВОЕ
+    var translationCloud: String? = null,  // НОВОЕ
     var status: Int = 1
 )

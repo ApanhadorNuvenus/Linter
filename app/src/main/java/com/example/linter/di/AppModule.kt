@@ -1,11 +1,10 @@
 package com.example.linter.di
 
 import android.content.Context
-import android.os.Build
-import androidx.annotation.RequiresApi
 import com.example.linter.data.model.AndroidBreakIteratorTokenizer
 import com.example.linter.data.remote.MLKitTranslator
 import com.example.linter.data.remote.HelsinkiOnnxTranslator
+import com.example.linter.data.remote.CloudTranslatorStub // ИМПОРТ ДОБАВЛЕН
 import com.example.linter.data.repository.LectureRepositoryImpl
 import com.example.linter.data.repository.VocabularyRepositoryImpl
 import com.example.linter.data.youtube.NewPipeDownloader
@@ -18,30 +17,30 @@ import com.example.linter.domain.repository.YoutubeRepository
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.localization.Localization
 
-@RequiresApi(Build.VERSION_CODES.O)
 object AppModule {
     lateinit var context: Context
 
     fun init(context: Context) {
         this.context = context.applicationContext
+
+        // Инициализация NewPipeExtractor
         NewPipe.init(NewPipeDownloader.getInstance(), Localization("en", "US"))
     }
 
-    // Два независимых переводчика
+    // Переводчики (Строго по одному объявлению на каждый тип!)
     val mlKitTranslator: TextTranslator by lazy { MLKitTranslator() }
     val onnxTranslator: TextTranslator by lazy { HelsinkiOnnxTranslator(context) }
+    val cloudTranslator: TextTranslator by lazy { CloudTranslatorStub() }
 
     val tokenizer: TextTokenizer by lazy { AndroidBreakIteratorTokenizer() }
-    val lectureRepository: LectureRepository by lazy { LectureRepositoryImpl() }
 
-    // MLKit используется как базовый переводчик для одиночных слов (для Vocabulary)
+    val lectureRepository: LectureRepository by lazy { LectureRepositoryImpl() }
     val vocabularyRepository: VocabularyRepository by lazy { VocabularyRepositoryImpl(mlKitTranslator) }
 
     val reviewRepository: com.example.linter.domain.repository.ReviewRepository by lazy {
         com.example.linter.data.repository.ReviewRepositoryImpl(vocabularyRepository, tokenizer)
     }
 
-    // YoutubeRepository получает оба транслятора
     val youtubeRepository: YoutubeRepository by lazy {
         YoutubeRepositoryImpl(mlKitTranslator, onnxTranslator, context)
     }

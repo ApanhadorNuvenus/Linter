@@ -48,7 +48,6 @@ fun YoutubeDetailScreen(
     val context = LocalContext.current
     val exoPlayer = remember { ExoPlayer.Builder(context).build() }
 
-    // Утилиты для копирования и уведомлений
     val clipboardManager = LocalClipboardManager.current
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
@@ -60,6 +59,9 @@ fun YoutubeDetailScreen(
     var speedMenuExpanded by remember { mutableStateOf(false) }
     var qualityMenuExpanded by remember { mutableStateOf(false) }
 
+    // НОВОЕ: Запоминаем состояние плеера до вызова попапа
+    var wasPlayingWhenClicked by remember { mutableStateOf(false) }
+
     val listState = rememberLazyListState()
 
     LaunchedEffect(state.currentBlockIndex) {
@@ -68,14 +70,25 @@ fun YoutubeDetailScreen(
         }
     }
 
+    // НОВОЕ: Централизованный слушатель закрытия попапа
+    // Неважно, как закрылся попап (кнопкой Отмена, кнопкой Знаю/Учу или Назад) —
+    // этот блок поймает момент закрытия (Hidden) и правильно восстановит видео.
+    LaunchedEffect(state.popupState) {
+        if (state.popupState is PopupState.Hidden) {
+            if (wasPlayingWhenClicked) {
+                exoPlayer.play()
+                wasPlayingWhenClicked = false // Сбрасываем флаг
+            }
+        }
+    }
+
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) }, // Контейнер для всплывающих уведомлений
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(state.title, maxLines = 1) },
                 navigationIcon = { TextButton(onClick = onBack) { Text("Назад") } },
                 actions = {
-                    // КНОПКА: Копировать ссылку
                     IconButton(
                         onClick = {
                             if (state.originalUrl.isNotBlank()) {
@@ -89,7 +102,6 @@ fun YoutubeDetailScreen(
                         Icon(Icons.Default.Share, contentDescription = "Копировать ссылку")
                     }
 
-                    // КНОПКА: Настройки
                     IconButton(onClick = { showSettings = true }) {
                         Icon(Icons.Default.Settings, contentDescription = "Настройки")
                     }
@@ -107,7 +119,6 @@ fun YoutubeDetailScreen(
                     Text("Ошибка: ${state.error}", color = MaterialTheme.colorScheme.error)
                 }
             } else {
-                // ВИДЕО ПЛЕЕР И ОВЕРЛЕИ
                 Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black)) {
                     AndroidView(
                         factory = { ctx ->
@@ -119,13 +130,11 @@ fun YoutubeDetailScreen(
                         modifier = Modifier.fillMaxSize()
                     )
 
-                    // ОВЕРЛЕЙ: Меню скорости и качества
                     Row(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
                             .padding(8.dp)
                     ) {
-                        // Кнопка Качества
                         Box {
                             Surface(
                                 color = Color.Black.copy(alpha = 0.6f),
@@ -157,7 +166,6 @@ fun YoutubeDetailScreen(
 
                         Spacer(modifier = Modifier.width(8.dp))
 
-                        // Кнопка Скорости
                         Box {
                             Surface(
                                 color = Color.Black.copy(alpha = 0.6f),
@@ -190,7 +198,6 @@ fun YoutubeDetailScreen(
                     }
                 }
 
-                // СУБТИТРЫ (Центрированный UI)
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxWidth().weight(1f),
@@ -247,7 +254,10 @@ fun YoutubeDetailScreen(
                                 onClick = { offset ->
                                     annotatedText.getStringAnnotations("WORD", offset, offset)
                                         .firstOrNull()?.let { annotation ->
+                                            // НОВОЕ: Запоминаем, играло ли видео, и ставим на паузу
+                                            wasPlayingWhenClicked = exoPlayer.isPlaying
                                             exoPlayer.pause()
+
                                             viewModel.onWordClicked(annotation.item, block.sourceText)
                                         }
                                 }
@@ -255,7 +265,6 @@ fun YoutubeDetailScreen(
 
                             Spacer(modifier = Modifier.height(6.dp))
 
-                            // Динамический выбор отображаемого перевода
                             val displayedTranslation = when (state.translationMode) {
                                 TranslationMode.YOUTUBE_NATIVE -> block.translatedText ?: ""
                                 TranslationMode.LOCAL_ML_KIT -> block.mlKitTranslatedText ?: "Перевод (ML Kit)..."
@@ -282,13 +291,12 @@ fun YoutubeDetailScreen(
                 onMarkAsIgnored = { word -> viewModel.onMarkAsIgnored(word) },
                 onChangeLearningStatus = { cardId, word, lStatus -> viewModel.onChangeLearningStatus(cardId, word, lStatus) },
                 onDismiss = {
+                    // ИЗМЕНЕНИЕ: Просто закрываем. LaunchedEffect сам разберется, включать ли видео.
                     viewModel.dismissPopup()
-                    exoPlayer.play()
                 }
             )
         }
 
-        // ШТОРКА НАСТРОЕК (BottomSheet)
         if (showSettings) {
             ModalBottomSheet(onDismissRequest = { showSettings = false }) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -322,7 +330,6 @@ fun YoutubeDetailScreen(
                     HorizontalDivider()
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // КНОПКА ЖЕСТКОЙ ОЧИСТКИ
                     Button(
                         onClick = {
                             showSettings = false
