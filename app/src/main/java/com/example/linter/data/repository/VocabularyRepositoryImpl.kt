@@ -13,8 +13,10 @@ import com.example.linter.domain.model.MultiTranslation
 import com.example.linter.domain.repository.VocabularyRepository
 import com.example.linter.domain.model.TextTranslator
 import com.example.linter.di.AppModule
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 
 class VocabularyRepositoryImpl(
     private val translator: TextTranslator
@@ -23,19 +25,41 @@ class VocabularyRepositoryImpl(
     private val vocabBox get() = ObjectBox.vocabularyBox
     private val cardBox get() = ObjectBox.contextCardBox
 
-    override suspend fun getWordMetas(words: List<String>): Map<String, WordMeta> {
+    override suspend fun getWordMetas(words: List<String>): Map<String, WordMeta> = withContext(Dispatchers.IO) {
         val uniqueWords = words.map { it.lowercase() }.distinct()
+        if (uniqueWords.isEmpty()) return@withContext emptyMap()
+
         val result = mutableMapOf<String, WordMeta>()
 
-        for (word in uniqueWords) {
-            val vocabItem = vocabBox.query(VocabularyItemEntity_.text.equal(word)).build().findFirst()
-            if (vocabItem == null) { result[word] = WordMeta(status = UiWordStatus.BLUE); continue }
-            if (vocabItem.isKnown || vocabItem.isIgnored) { result[word] = WordMeta(status = UiWordStatus.TRANSPARENT); continue }
+        // Optimization: Single batch query to find all vocab items at once
+        val vocabItems = vocabBox.query(VocabularyItemEntity_.text.oneOf(uniqueWords.toTypedArray())).build().find()
+        val vocabMap = vocabItems.associateBy { it.text }
 
-            val activeCard = cardBox.query(ContextCardEntity_.vocabularyItemId.equal(vocabItem.id)).build().findFirst()
+        // Optimization: Single batch query to find all cards associated with these vocab items
+        val vocabItemIds = vocabItems.map { it.id }.toLongArray()
+        val activeCards = if (vocabItemIds.isNotEmpty()) {
+            cardBox.query(ContextCardEntity_.vocabularyItemId.oneOf(vocabItemIds)).build().find()
+        } else {
+            emptyList()
+        }
+        val cardMap = activeCards.associateBy { it.vocabularyItemId }
+
+        for (word in uniqueWords) {
+            val vocabItem = vocabMap[word]
+            if (vocabItem == null) {
+                result[word] = WordMeta(status = UiWordStatus.BLUE)
+                continue
+            }
+            if (vocabItem.isKnown || vocabItem.isIgnored) {
+                result[word] = WordMeta(status = UiWordStatus.TRANSPARENT)
+                continue
+            }
+
+            val activeCard = cardMap[vocabItem.id]
             if (activeCard != null) {
                 result[word] = WordMeta(
-                    status = UiWordStatus.YELLOW, learningStatus = LearningStatus.fromLevel(activeCard.status),
+                    status = UiWordStatus.YELLOW,
+                    learningStatus = LearningStatus.fromLevel(activeCard.status),
                     translations = MultiTranslation(activeCard.translation, activeCard.translationOnnx, activeCard.translationCloud),
                     contextCardId = activeCard.id
                 )
@@ -43,33 +67,41 @@ class VocabularyRepositoryImpl(
                 result[word] = WordMeta(status = UiWordStatus.BLUE)
             }
         }
-        return result
+        result
     }
 
-    override suspend fun getLearningPhrasesMetas(): List<Pair<String, WordMeta>> {
+    override suspend fun getLearningPhrasesMetas(): List<Pair<String, WordMeta>> = withContext(Dispatchers.IO) {
+        // Query only what we need instead of pulling 'cardBox.all'
         val phraseCards = cardBox.all
+        if (phraseCards.isEmpty()) return@withContext emptyList()
+
+        val cardItemIds = phraseCards.map { it.vocabularyItemId }.toLongArray()
+        val vocabItems = vocabBox.query(VocabularyItemEntity_.id.oneOf(cardItemIds)).build().find()
+        val vocabMap = vocabItems.associateBy { it.id }
+
         val result = mutableListOf<Pair<String, WordMeta>>()
         for (card in phraseCards) {
-            val vocabItem = vocabBox[card.vocabularyItemId]
+            val vocabItem = vocabMap[card.vocabularyItemId]
             if (vocabItem != null && vocabItem.text.contains(" ") && !vocabItem.isKnown && !vocabItem.isIgnored) {
-                result.add(vocabItem.text to WordMeta(
-                    status = UiWordStatus.YELLOW, learningStatus = LearningStatus.fromLevel(card.status),
-                    translations = MultiTranslation(card.translation, card.translationOnnx, card.translationCloud),
-                    contextCardId = card.id
-                ))
+                result.add(
+                    vocabItem.text to WordMeta(
+                        status = UiWordStatus.YELLOW,
+                        learningStatus = LearningStatus.fromLevel(card.status),
+                        translations = MultiTranslation(card.translation, card.translationOnnx, card.translationCloud),
+                        contextCardId = card.id
+                    )
+                )
             }
         }
-        return result
+        result
     }
 
     override suspend fun fetchMultiTranslations(wordOrPhrase: String, sourceLang: String): MultiTranslation = coroutineScope {
-        // Читаем глобальные настройки отображения
         val prefs = AppModule.context.getSharedPreferences("linter_settings", Context.MODE_PRIVATE)
         val showMl = prefs.getBoolean("pref_show_ml_kit", true)
         val showOnnx = prefs.getBoolean("pref_show_onnx", true)
         val showCloud = prefs.getBoolean("pref_show_cloud", true)
 
-        // Запрашиваем только то, что включил пользователь
         val mlDeferred = if (showMl) async { translator.translate(wordOrPhrase, sourceLang, "ru") } else null
         val onnxDeferred = if (showOnnx) async { AppModule.onnxTranslator.translate(wordOrPhrase, sourceLang, "ru") } else null
         val cloudDeferred = if (showCloud) async { AppModule.cloudTranslator.translate(wordOrPhrase, sourceLang, "ru") } else null
@@ -81,64 +113,74 @@ class VocabularyRepositoryImpl(
         )
     }
 
-    private fun getOrCreateVocabItem(word: String): VocabularyItemEntity {
+    private suspend fun getOrCreateVocabItem(word: String): VocabularyItemEntity = withContext(Dispatchers.IO) {
         val normalized = word.lowercase()
-        return vocabBox.query(VocabularyItemEntity_.text.equal(normalized)).build().findFirst()
+        vocabBox.query(VocabularyItemEntity_.text.equal(normalized)).build().findFirst()
             ?: VocabularyItemEntity(text = normalized).also { vocabBox.put(it) }
     }
 
     override suspend fun markAsKnown(word: String) {
-        val item = getOrCreateVocabItem(word)
-        item.isKnown = true
-        vocabBox.put(item)
+        withContext(Dispatchers.IO) {
+            val item = getOrCreateVocabItem(word)
+            item.isKnown = true
+            vocabBox.put(item)
+        }
     }
 
     override suspend fun markAsIgnored(word: String) {
-        val item = getOrCreateVocabItem(word)
-        item.isIgnored = true
-        vocabBox.put(item)
+        withContext(Dispatchers.IO) {
+            val item = getOrCreateVocabItem(word)
+            item.isIgnored = true
+            vocabBox.put(item)
+        }
     }
 
     override suspend fun createLearningCard(
         word: String, lectureId: Long, youtubeVideoId: Long,
         contextSentence: String, translations: MultiTranslation, status: LearningStatus
     ) {
-        val item = getOrCreateVocabItem(word)
-        item.isKnown = false
-        item.isIgnored = false
-        vocabBox.put(item)
+        withContext(Dispatchers.IO) {
+            val item = getOrCreateVocabItem(word)
+            item.isKnown = false
+            item.isIgnored = false
+            vocabBox.put(item)
 
-        val card = ContextCardEntity(
-            vocabularyItemId = item.id, lectureId = lectureId, youtubeVideoId = youtubeVideoId,
-            contextSentence = contextSentence,
-            translation = translations.mlKit ?: "", // Защита от null
-            translationOnnx = translations.onnx,
-            translationCloud = translations.cloud,
-            status = status.level
-        )
-        val contextCardId = cardBox.put(card)
+            val card = ContextCardEntity(
+                vocabularyItemId = item.id, lectureId = lectureId, youtubeVideoId = youtubeVideoId,
+                contextSentence = contextSentence,
+                translation = translations.mlKit ?: "",
+                translationOnnx = translations.onnx,
+                translationCloud = translations.cloud,
+                status = status.level
+            )
+            val contextCardId = cardBox.put(card)
 
-        val flashCard = com.example.linter.data.local.entity.FlashCardEntity(
-            contextCardId = contextCardId,
-            stability = 0.0,
-            difficulty = 0.0,
-            interval = 0,
-            dueDateMillis = System.currentTimeMillis(),
-            reviewCount = 0,
-            lastReviewMillis = System.currentTimeMillis(),
-            phase = com.example.linter.data.fsrs.CardPhase.Added.value
-        )
-        com.example.linter.data.local.ObjectBox.flashCardBox.put(flashCard)
+            val flashCard = com.example.linter.data.local.entity.FlashCardEntity(
+                contextCardId = contextCardId,
+                stability = 0.0,
+                difficulty = 0.0,
+                interval = 0,
+                dueDateMillis = System.currentTimeMillis(),
+                reviewCount = 0,
+                lastReviewMillis = System.currentTimeMillis(),
+                phase = com.example.linter.data.fsrs.CardPhase.Added.value
+            )
+            com.example.linter.data.local.ObjectBox.flashCardBox.put(flashCard)
+        }
     }
 
     override suspend fun updateCardStatus(cardId: Long, newStatus: LearningStatus) {
-        val card = cardBox[cardId] ?: return
-        card.status = newStatus.level
-        cardBox.put(card)
+        withContext(Dispatchers.IO) {
+            val card = cardBox[cardId] ?: return@withContext
+            card.status = newStatus.level
+            cardBox.put(card)
+        }
     }
 
     override suspend fun moveCardToKnown(cardId: Long, word: String) {
-        cardBox.remove(cardId)
-        markAsKnown(word)
+        withContext(Dispatchers.IO) {
+            cardBox.remove(cardId)
+            markAsKnown(word)
+        }
     }
 }

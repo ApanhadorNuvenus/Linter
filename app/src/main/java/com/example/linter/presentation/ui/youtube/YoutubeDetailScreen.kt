@@ -72,9 +72,33 @@ fun YoutubeDetailScreen(
 
     val listState = rememberLazyListState()
 
+    // Флаг, чтобы отследить самый первый прыжок к сохраненной позиции
+    var isInitialScrollDone by remember { mutableStateOf(false) }
+
+    // Контролируем прокрутку напрямую через корутину LaunchedEffect (без утечек)
     LaunchedEffect(state.currentBlockIndex) {
-        if (state.currentBlockIndex >= 0 && !listState.isScrollInProgress) {
-            coroutineScope.launch { listState.animateScrollToItem(state.currentBlockIndex) }
+        val targetIndex = state.currentBlockIndex
+        if (targetIndex >= 0 && state.subtitles.isNotEmpty()) {
+
+            // Смещение в пикселях, чтобы активный субтитр был чуть ниже верхней границы (комфортно для глаз)
+            val scrollOffset = -120
+
+            if (!isInitialScrollDone) {
+                // 1. ПЕРВЫЙ ЗАПУСК: Мгновенно позиционируем без анимации, исключая визуальный лаг
+                listState.scrollToItem(targetIndex, scrollOffset)
+                isInitialScrollDone = true
+            } else {
+                val firstVisible = listState.firstVisibleItemIndex
+                val distance = kotlin.math.abs(targetIndex - firstVisible)
+
+                if (distance > 3) {
+                    // 2. ДЛИННЫЙ СКАЧОК (Seek/Перемотка): Мгновенно перемещаем, чтобы не грузить UI рендером
+                    listState.scrollToItem(targetIndex, scrollOffset)
+                } else {
+                    // 3. ЕСТЕСТВЕННЫЙ ХОД (1-3 шага): Плавно передвигаем строку
+                    listState.animateScrollToItem(targetIndex, scrollOffset)
+                }
+            }
         }
     }
 

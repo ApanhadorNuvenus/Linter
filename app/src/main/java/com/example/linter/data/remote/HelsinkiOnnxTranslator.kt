@@ -32,6 +32,16 @@ class HelsinkiOnnxTranslator(private val context: Context) : TextTranslator {
     private var eosTokenId: Long = 0L
     private var unkTokenId: Long = 2L
 
+    companion object {
+        @Volatile
+        private var cachedField: java.lang.reflect.Field? = null
+        @Volatile
+        private var cachedMethod: java.lang.reflect.Method? = null
+        @Volatile
+        private var isReflectionInspected = false
+        private val reflectionLock = Any()
+    }
+
     private fun getAssetFilePath(lang: String, fileName: String): String {
         val assetPath = "onnx/$lang/$fileName"
         val file = File(context.cacheDir, "${lang}_$fileName")
@@ -43,7 +53,6 @@ class HelsinkiOnnxTranslator(private val context: Context) : TextTranslator {
         return file.absolutePath
     }
 
-    // ДИНАМИЧЕСКАЯ ЗАГРУЗКА: Загружает модель только если язык сменился
     @Synchronized
     private fun loadModelsForLang(lang: String) {
         if (currentLang == lang) return
@@ -55,7 +64,6 @@ class HelsinkiOnnxTranslator(private val context: Context) : TextTranslator {
 
         val opts = OrtSession.SessionOptions().apply { addConfigEntry("session.load_model_format", "ONNX") }
 
-        // Читаем из папки конкретного языка (например onnx/fr/...)
         val encoderBytes = context.assets.open("onnx/$lang/encoder_model_quantized.onnx").readBytes()
         encoderSession = env.createSession(encoderBytes, opts)
 
@@ -82,25 +90,58 @@ class HelsinkiOnnxTranslator(private val context: Context) : TextTranslator {
 
     private fun getPieceStrFromModel(model: Model, spId: Int): String {
         try {
-            for (field in model::class.java.declaredFields) {
-                field.isAccessible = true
-                val obj = field.get(model)
-                if (obj is Array<*> && obj.isNotEmpty() && obj[0] is String) return obj.getOrNull(spId)?.toString() ?: "<unk>"
-                if (obj is List<*> && obj.isNotEmpty() && obj[0] is String) return obj.getOrNull(spId)?.toString() ?: "<unk>"
-            }
-            for (method in model::class.java.methods) {
-                if (method.returnType == String::class.java && method.parameterCount == 1 && !method.name.contains("decode", true)) {
-                    return method.invoke(model, spId) as String
+            if (!isReflectionInspected) {
+                synchronized(reflectionLock) {
+                    if (!isReflectionInspected) {
+                        for (field in model::class.java.declaredFields) {
+                            try {
+                                field.isAccessible = true
+                                val obj = field.get(model)
+                                if (obj is Array<*> && obj.isNotEmpty() && obj[0] is String) {
+                                    cachedField = field
+                                    break
+                                }
+                                if (obj is List<*> && obj.isNotEmpty() && obj[0] is String) {
+                                    cachedField = field
+                                    break
+                                }
+                            } catch (e: Exception) {
+                                // Игнорируем ошибки доступа к отдельным полям и продолжаем поиск
+                            }
+                        }
+                        if (cachedField == null) {
+                            for (method in model::class.java.methods) {
+                                if (method.returnType == String::class.java && method.parameterCount == 1 && !method.name.contains("decode", true)) {
+                                    cachedMethod = method
+                                    break
+                                }
+                            }
+                        }
+                        isReflectionInspected = true
+                    }
                 }
             }
-        } catch (e: Exception) {}
+
+            cachedField?.let { field ->
+                val obj = field.get(model)
+                if (obj is Array<*>) return obj.getOrNull(spId)?.toString() ?: "<unk>"
+                if (obj is List<*>) return obj.getOrNull(spId)?.toString() ?: "<unk>"
+            }
+
+            cachedMethod?.let { method ->
+                return method.invoke(model, spId) as String
+            }
+        } catch (e: Exception) {
+            // Безопасный перехват непредвиденных исключений вызова
+        }
         return "<unk>"
     }
 
     override suspend fun translate(text: String, sourceLang: String, targetLang: String): Result<String> = withContext(Dispatchers.Default) {
         try {
-            // Пытаемся загрузить модель для требуемого языка
-            loadModelsForLang(sourceLang)
+            withContext(Dispatchers.IO) {
+                loadModelsForLang(sourceLang)
+            }
 
             val cleanText = text.replace("\n", " ").trim()
             if (cleanText.isEmpty()) return@withContext Result.success("")
@@ -163,7 +204,6 @@ class HelsinkiOnnxTranslator(private val context: Context) : TextTranslator {
             Result.success(sb.toString().replace("\u2581", " ").trim())
 
         } catch (e: Exception) {
-            // Если папки с языком нет, возвращаем красивую ошибку
             Result.success("❌ Офлайн-модель для '$sourceLang' не установлена")
         }
     }

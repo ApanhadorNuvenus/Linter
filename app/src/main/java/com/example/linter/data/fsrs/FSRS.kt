@@ -1,8 +1,6 @@
 package com.example.linter.data.fsrs
 
-import android.annotation.SuppressLint
 import androidx.compose.ui.graphics.Color
-import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.floor
@@ -13,7 +11,6 @@ import kotlin.math.roundToInt
 import kotlin.random.Random
 import kotlin.ranges.coerceIn
 
-@SuppressLint("DefaultLocale")
 class FSRS(
     private val requestRetention: Double,
     private val params: List<Double>,
@@ -38,6 +35,12 @@ class FSRS(
         Grade(color = colorAgain, title = "Again", choice = Rating.Again, durationMillis = 0, interval = 0, txt = "")
     )
 
+    // Высокоэффективное математическое округление без выделения памяти в куче
+    private fun roundToTwoDecimals(value: Double): Double {
+        if (value.isNaN() || value.isInfinite()) return 0.0
+        return kotlin.math.round(value * 100.0) / 100.0
+    }
+
     fun calculate(flashCard: FlashCard): List<Grade> {
         var stateAgain: InitState
         var stateHard: InitState
@@ -60,7 +63,6 @@ class FSRS(
 
         when (flashCard.phase) {
             CardPhase.Added.value -> {
-                // ИСПРАВЛЕНИЕ: Теперь мы берем настоящие начальные значения, а не нули!
                 stateAgain = initState(Rating.Again)
                 stateHard = initState(Rating.Hard)
                 stateGood = initState(Rating.Good)
@@ -105,7 +107,6 @@ class FSRS(
             else -> {
                 val interval = flashCard.interval
 
-                // АВТО-ЛЕЧЕНИЕ БАЗЫ ДАННЫХ: Если в БД закралась сломанная карточка с нулями, мы её лечим
                 val lastD = if (flashCard.difficulty <= 0.0) initDifficulty(Rating.Good) else flashCard.difficulty
                 val lastS = if (flashCard.stability <= 0.0) initStability(Rating.Good) else flashCard.stability
 
@@ -149,7 +150,6 @@ class FSRS(
     }
 
     private fun applyFuzz(interval: Double, fuzzFactor: Double, scheduledDays: Int = 0): Double {
-        // Дополнительная защита от NaN на всякий случай
         if (!enableFuzz || interval < 2.5 || interval.isNaN()) return interval
         val ivl = interval.roundToInt()
         var minIvl = max(2, (ivl * 0.95 - 1).roundToInt())
@@ -170,13 +170,13 @@ class FSRS(
         val base = params[4]
         val exponent = params[5] * (rating.value - 1)
         val raw = base - exp(exponent) + 1
-        return String.format(Locale.US, "%.2f", raw.coerceIn(1.0, 10.0)).toDouble()
+        return roundToTwoDecimals(raw.coerceIn(1.0, 10.0))
     }
 
     private fun initStability(rating: Rating): Double {
         val index = rating.value - 1
         val value = params.getOrElse(index) { 0.1 }
-        return String.format(Locale.US, "%.2f", value.coerceAtMost(0.1)).toDouble()
+        return roundToTwoDecimals(value.coerceAtMost(0.1))
     }
 
     private fun initState(rating: Rating): InitState = InitState(initDifficulty(rating), initStability(rating))
@@ -197,19 +197,19 @@ class FSRS(
         val damped = linearDamping(deltaD, currentD)
         val nextD = currentD + damped
         val reverted = meanReversion(initDifficulty(Rating.Easy), nextD)
-        return String.format(Locale.US, "%.2f", reverted.coerceIn(1.0, 10.0)).toDouble()
+        return roundToTwoDecimals(reverted.coerceIn(1.0, 10.0))
     }
 
     private fun nextShortTermStability(currentS: Double, rating: Rating): Double {
         var sinc = exp(params[17] * (rating.value - 3 + params[18])) * currentS.pow(-params[19])
         if (rating.value >= 3) sinc = max(sinc, 1.0)
-        return String.format(Locale.US, "%.2f", abs(currentS * sinc)).toDouble()
+        return roundToTwoDecimals(abs(currentS * sinc))
     }
 
     private fun nextForgetStability(difficulty: Double, stability: Double, retrievability: Double): Double {
         val sMin = stability / exp(params[17] * params[18])
         val result = params[11] * difficulty.pow(-params[12]) * ((stability + 1).pow(params[13]) - 1) * exp((1 - retrievability) * params[14])
-        return String.format(Locale.US, "%.2f", min(result, sMin)).toDouble()
+        return roundToTwoDecimals(min(result, sMin))
     }
 
     private fun nextRecallStability(d: Double, s: Double, r: Double, rating: Rating): Double {
@@ -217,6 +217,6 @@ class FSRS(
         val easyBonus = if (rating == Rating.Easy) params[16] else 1.0
         val factor = exp(params[8]) * (11 - d) * s.pow(-params[9]) * (exp((1 - r) * params[10]) - 1) * hardPenalty * easyBonus
         val result = s * (1 + factor)
-        return String.format(Locale.US, "%.2f", result).toDouble()
+        return roundToTwoDecimals(result)
     }
 }

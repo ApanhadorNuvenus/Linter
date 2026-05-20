@@ -33,6 +33,19 @@ class YoutubeRepositoryImpl(
 
     private val TAG = "LINTER_DEBUG"
 
+
+    companion object {
+        // Pre-compiling Regex to avoid compilation inside loop structures
+        private val UNWANTED_CHARACTERS_REGEX = Regex("[^\\p{L}']")
+        private val ENDS_WITH_PUNCTUATION_REGEX = Regex(".*[.!?,]$")
+        private val XML_TEXT_TAG_PATTERN = java.util.regex.Pattern.compile("<text start=\"([\\d.]+)\"(?: dur=\"([\\d.]+)\")?[^>]*>(.*?)</text>", java.util.regex.Pattern.DOTALL)
+        private val CLEAN_HTML_TAGS_REGEX = Regex("<[^>]*>")
+        private val MULTIPLE_SPACES_REGEX = Regex("\\s+")
+        private val RUSSIAN_PUNCTUATION_REGEX = Regex("[^а-яё]")
+        private val SENTENCE_END_MATCH_REGEX = Regex(".*[,.!?;:][\"'\\]»]*$")
+        private val VIDEO_ID_EXTRACTION_REGEX = Regex("(?:v=|youtu\\.be/|embed/|shorts/)([\\w-]{11})")
+    }
+
     override fun getDefaultQuality(): String = prefs.getString("default_quality", "Auto") ?: "Auto"
     override fun setDefaultQuality(quality: String) = prefs.edit().putString("default_quality", quality).apply()
 
@@ -342,17 +355,12 @@ class YoutubeRepositoryImpl(
         var bestSplitIndex = -1
         var maxScore = Int.MIN_VALUE
 
-        // Расширенный список для Английского и Французского языков
         val conjunctions = setOf(
-            // EN
             "and", "but", "so", "because", "until", "while", "after", "before", "when", "which", "that", "who", "where", "if",
-            // FR
             "et", "ou", "mais", "donc", "car", "parce", "que", "qui", "quand", "si", "comme", "puisque"
         )
         val orphans = setOf(
-            // EN
             "a", "an", "the", "in", "on", "at", "to", "for", "of", "with", "by", "from", "is", "are", "was", "were", "am", "i", "you", "he", "she", "it", "we", "they", "my", "your", "his", "her", "our", "their",
-            // FR (включая апострофы)
             "le", "la", "les", "un", "une", "des", "de", "du", "d'", "l'", "à", "au", "aux", "dans", "sur", "en", "vers", "avec", "sans", "sous", "par", "pour", "je", "tu", "il", "elle", "on", "nous", "vous", "ils", "elles", "mon", "ton", "son", "ma", "ta", "sa", "mes", "tes", "ses", "est", "sont", "suis", "es", "c'", "c", "qu'", "qu"
         )
 
@@ -362,23 +370,23 @@ class YoutubeRepositoryImpl(
             val wordBeforeRaw = sentence[i - 1].text
             val wordAfterRaw = sentence[i].text
 
-            // ИСПРАВЛЕНИЕ: Используем \p{L} для поддержки всех алфавитов (включая é, à, ç и т.д.)
-            val wordBefore = wordBeforeRaw.lowercase().replace(Regex("[^\\p{L}']"), "")
-            val wordAfter = wordAfterRaw.lowercase().replace(Regex("[^\\p{L}']"), "")
+            // Using static pre-compiled regex objects
+            val wordBefore = wordBeforeRaw.lowercase().replace(UNWANTED_CHARACTERS_REGEX, "")
+            val wordAfter = wordAfterRaw.lowercase().replace(UNWANTED_CHARACTERS_REGEX, "")
 
             if (wordBeforeRaw.endsWith(",")) score += 100
             if (wordBeforeRaw.endsWith(";") || wordBeforeRaw.endsWith("-")) score += 80
             if (wordAfter in conjunctions) score += 90
 
             if (wordBefore in orphans) score -= 500
-            if (wordAfterRaw.matches(Regex(".*[.!?,]$"))) score -= 500
+            if (wordAfterRaw.matches(ENDS_WITH_PUNCTUATION_REGEX)) score -= 500
 
             val leftSize = i
             val rightSize = sentence.size - i
 
             if (leftSize < 3 || rightSize < 3) score -= 1000
 
-            val diff = abs(leftSize - rightSize)
+            val diff = kotlin.math.abs(leftSize - rightSize)
             score -= (diff * 5)
 
             if (score > maxScore) {
@@ -401,18 +409,12 @@ class YoutubeRepositoryImpl(
         return result
     }
 
-    // ====================== ALGORITHM: 2-PASS OVERLAP MERGE ======================
-    private val endSentenceRegex = Regex(".*[.!?…]+[\"'\\]»]*$")
-
-    // ====================== ALGORITHM: TIME-INTERPOLATION + SEMANTIC SEAM ADJUSTER ======================
-
     private fun mergeSubtitles(smartSourceBlocks: List<SubtitleBlock>, rawRuBlocks: List<SubtitleBlock>): List<SubtitleBlock> {
         if (smartSourceBlocks.isEmpty() || rawRuBlocks.isEmpty()) return smartSourceBlocks
 
-        // 1. Упаковываем все русские слова в один поток с аппроксимированными таймкодами (интерполяция)
         val ruWords = mutableListOf<TimedWord>()
         for (ru in rawRuBlocks) {
-            val words = ru.sourceText.split(Regex("\\s+")).filter { it.isNotBlank() }
+            val words = ru.sourceText.split(MULTIPLE_SPACES_REGEX).filter { it.isNotBlank() }
             if (words.isEmpty()) continue
             val duration = maxOf(1L, ru.endTimeMs - ru.startTimeMs)
             val timePerWord = duration / words.size
@@ -421,7 +423,6 @@ class YoutubeRepositoryImpl(
             }
         }
 
-        // 2. Первичное (черновое) распределение слов по французским блокам на основе времени
         val blockAllocations = Array(smartSourceBlocks.size) { mutableListOf<TimedWord>() }
         for (ruWord in ruWords) {
             val wordCenter = (ruWord.start + ruWord.end) / 2
@@ -434,7 +435,7 @@ class YoutubeRepositoryImpl(
                     bestIndex = i
                     break
                 } else {
-                    val dist = minOf(Math.abs(wordCenter - smart.startTimeMs), Math.abs(wordCenter - smart.endTimeMs))
+                    val dist = minOf(kotlin.math.abs(wordCenter - smart.startTimeMs), kotlin.math.abs(wordCenter - smart.endTimeMs))
                     if (dist < minDistance) {
                         minDistance = dist
                         bestIndex = i
@@ -444,7 +445,6 @@ class YoutubeRepositoryImpl(
             if (bestIndex != -1) blockAllocations[bestIndex].add(ruWord)
         }
 
-        // 3. МАГИЯ: Семантическое сглаживание швов (Semantic Seam Adjuster)
         val ruConjunctions = setOf("и", "а", "но", "да", "или", "либо", "что", "чтобы", "как", "если", "хотя", "где", "когда", "который", "которая", "потому", "поэтому", "так", "затем", "потом", "ведь", "чем")
         val ruDangling = setOf("в", "на", "с", "к", "от", "из", "у", "за", "над", "под", "о", "об", "для", "до", "без", "не", "ни")
 
@@ -454,7 +454,6 @@ class YoutubeRepositoryImpl(
 
             if (currentWords.isEmpty() && nextWords.isEmpty()) continue
 
-            // Создаем окно из 8 слов вокруг математического "шва" (4 слева, 4 справа)
             val windowSize = 4
             val leftPart = currentWords.takeLast(windowSize)
             val rightPart = nextWords.take(windowSize)
@@ -466,28 +465,19 @@ class YoutubeRepositoryImpl(
             var bestCutIndex = originalCutIndex
             var maxScore = -1000
 
-            // Перебираем все возможные места разреза внутри окна
             for (k in 1 until window.size) {
                 var score = 0
                 val wordBefore = window[k - 1].text.lowercase()
                 val wordAfter = window[k].text.lowercase()
-                val cleanWordBefore = wordBefore.replace(Regex("[^а-яё]"), "")
-                val cleanWordAfter = wordAfter.replace(Regex("[^а-яё]"), "")
+                val cleanWordBefore = wordBefore.replace(RUSSIAN_PUNCTUATION_REGEX, "")
+                val cleanWordAfter = wordAfter.replace(RUSSIAN_PUNCTUATION_REGEX, "")
 
-                // Правило 1: Идеально резать после пунктуации
-                if (wordBefore.matches(Regex(".*[,.!?;:][\"'\\]»]*$"))) score += 100
-
-                // Правило 2: Хорошо, если новый блок начинается с союза (так, что, как)
+                if (wordBefore.matches(SENTENCE_END_MATCH_REGEX)) score += 100
                 if (cleanWordAfter in ruConjunctions) score += 50
-
-                // Правило 3: КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО оставлять предлог висеть в конце блока
                 if (cleanWordBefore in ruDangling) score -= 200
-
-                // Правило 4: Начинать блок с предлога — это правильно и естественно
                 if (cleanWordAfter in ruDangling) score += 20
 
-                // Правило 5: Штраф за слишком сильное отдаление от таймкода
-                val distance = Math.abs(k - originalCutIndex)
+                val distance = kotlin.math.abs(k - originalCutIndex)
                 score -= (distance * 15)
 
                 if (score > maxScore) {
@@ -496,17 +486,14 @@ class YoutubeRepositoryImpl(
                 }
             }
 
-            // Применяем лучший найденный разрез, "переливая" слова между блоками
             if (bestCutIndex != originalCutIndex && maxScore > -500) {
                 val shift = bestCutIndex - originalCutIndex
                 if (shift > 0) {
-                    // Перемещаем слова из начала следующего блока в конец текущего
                     val wordsToMove = nextWords.take(shift)
                     currentWords.addAll(wordsToMove)
                     blockAllocations[i + 1] = nextWords.drop(shift).toMutableList()
                 } else {
-                    // Перемещаем слова (например, висячие предлоги) из текущего в следующий
-                    val absShift = Math.abs(shift)
+                    val absShift = kotlin.math.abs(shift)
                     val wordsToMove = currentWords.takeLast(absShift)
                     nextWords.addAll(0, wordsToMove)
                     blockAllocations[i] = currentWords.dropLast(absShift).toMutableList()
@@ -514,13 +501,11 @@ class YoutubeRepositoryImpl(
             }
         }
 
-        // 4. Сборка итогового текста
         return smartSourceBlocks.mapIndexed { i, smart ->
             val mergedText = blockAllocations[i].joinToString(" ") { it.text }.takeIf { it.isNotBlank() }
             smart.copy(translatedText = mergedText)
         }
     }
-    // ====================== INNERTUBE API FALLBACK ======================
 
     private fun getInnertubeCaptionInfo(videoId: String, targetLang: String? = null): Pair<String, String>? {
         try {
@@ -665,8 +650,7 @@ class YoutubeRepositoryImpl(
 
     private fun parseSubtitles(xml: String): List<SubtitleBlock> {
         val blocks = mutableListOf<SubtitleBlock>()
-        val pattern = Pattern.compile("<text start=\"([\\d.]+)\"(?: dur=\"([\\d.]+)\")?[^>]*>(.*?)</text>", Pattern.DOTALL)
-        val matcher = pattern.matcher(xml)
+        val matcher = XML_TEXT_TAG_PATTERN.matcher(xml)
         var id = 0L
 
         while (matcher.find()) {
@@ -674,7 +658,14 @@ class YoutubeRepositoryImpl(
             val durSec = matcher.group(2)?.toFloatOrNull() ?: 2.0f
             var text = matcher.group(3) ?: continue
 
-            text = text.replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'").replace("&lt;", "<").replace("&gt;", ">").replace("\n", " ").replace(Regex("<[^>]*>"), "").trim()
+            text = text.replace("&amp;", "&")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("\n", " ")
+                .replace(CLEAN_HTML_TAGS_REGEX, "")
+                .trim()
             if (text.isBlank()) continue
             blocks.add(SubtitleBlock(id++, (startSec * 1000).toLong(), ((startSec + durSec) * 1000).toLong(), text))
         }
@@ -682,8 +673,7 @@ class YoutubeRepositoryImpl(
     }
 
     private fun extractVideoId(url: String): String? {
-        val regex = Regex("(?:v=|youtu\\.be/|embed/|shorts/)([\\w-]{11})")
-        return regex.find(url)?.groupValues?.get(1)
+        return VIDEO_ID_EXTRACTION_REGEX.find(url)?.groupValues?.get(1)
     }
 
     private fun YoutubeVideoEntity.toDomain() = YoutubeVideo(id, videoUrl, title, thumbnailUrl, progressMs, durationMs)
