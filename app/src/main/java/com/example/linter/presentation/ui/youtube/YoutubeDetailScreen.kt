@@ -1,13 +1,18 @@
 package com.example.linter.presentation.ui.youtube
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
@@ -15,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -34,6 +40,10 @@ import com.example.linter.domain.model.TranslationMode
 import com.example.linter.domain.model.UiWordStatus
 import com.example.linter.presentation.ui.components.WordPopup
 import com.example.linter.presentation.ui.lecturedetail.PopupState
+import com.example.linter.ui.theme.BlueWordDark
+import com.example.linter.ui.theme.BlueWordLight
+import com.example.linter.ui.theme.YellowWordDark
+import com.example.linter.ui.theme.YellowWordLight
 import kotlinx.coroutines.launch
 
 @androidx.annotation.OptIn(UnstableApi::class)
@@ -58,8 +68,6 @@ fun YoutubeDetailScreen(
     var showSettings by remember { mutableStateOf(false) }
     var speedMenuExpanded by remember { mutableStateOf(false) }
     var qualityMenuExpanded by remember { mutableStateOf(false) }
-
-    // НОВОЕ: Запоминаем состояние плеера до вызова попапа
     var wasPlayingWhenClicked by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
@@ -70,15 +78,10 @@ fun YoutubeDetailScreen(
         }
     }
 
-    // НОВОЕ: Централизованный слушатель закрытия попапа
-    // Неважно, как закрылся попап (кнопкой Отмена, кнопкой Знаю/Учу или Назад) —
-    // этот блок поймает момент закрытия (Hidden) и правильно восстановит видео.
     LaunchedEffect(state.popupState) {
-        if (state.popupState is PopupState.Hidden) {
-            if (wasPlayingWhenClicked) {
-                exoPlayer.play()
-                wasPlayingWhenClicked = false // Сбрасываем флаг
-            }
+        if (state.popupState is PopupState.Hidden && wasPlayingWhenClicked) {
+            exoPlayer.play()
+            wasPlayingWhenClicked = false
         }
     }
 
@@ -86,40 +89,51 @@ fun YoutubeDetailScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text(state.title, maxLines = 1) },
-                navigationIcon = { TextButton(onClick = onBack) { Text("Назад") } },
+                title = { Text(state.title, maxLines = 1, fontWeight = FontWeight.SemiBold) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
                 actions = {
                     IconButton(
                         onClick = {
                             if (state.originalUrl.isNotBlank()) {
                                 clipboardManager.setText(AnnotatedString(state.originalUrl))
-                                coroutineScope.launch {
-                                    snackbarHostState.showSnackbar("Ссылка скопирована")
-                                }
+                                coroutineScope.launch { snackbarHostState.showSnackbar("URL copied to clipboard") }
                             }
                         }
                     ) {
-                        Icon(Icons.Default.Share, contentDescription = "Копировать ссылку")
+                        Icon(Icons.Default.Share, contentDescription = "Copy link")
                     }
-
                     IconButton(onClick = { showSettings = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Настройки")
+                        Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
             )
-        }
+        },
+        containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
             if (state.isLoading) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
+                    CircularProgressIndicator(strokeWidth = 3.dp)
                 }
             } else if (state.error != null) {
                 Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
-                    Text("Ошибка: ${state.error}", color = MaterialTheme.colorScheme.error)
+                    Text(text = "Error: ${state.error}", color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
                 }
             } else {
-                Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black)) {
+                // Video & Control Dock with Frosted Pills
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .aspectRatio(16f / 9f)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color.Black)
+                ) {
                     AndroidView(
                         factory = { ctx ->
                             PlayerView(ctx).apply {
@@ -130,21 +144,26 @@ fun YoutubeDetailScreen(
                         modifier = Modifier.fillMaxSize()
                     )
 
+                    // Frosted Pill Container (Speed, Resolution)
                     Row(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(8.dp)
+                            .padding(12.dp)
                     ) {
+                        // Quality Selector Pill
                         Box {
                             Surface(
-                                color = Color.Black.copy(alpha = 0.6f),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.clickable { qualityMenuExpanded = true }
+                                color = Color.Black.copy(alpha = 0.5f),
+                                shape = RoundedCornerShape(20.dp),
+                                modifier = Modifier
+                                    .clickable { qualityMenuExpanded = true }
+                                    .border(0.5.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(20.dp))
                             ) {
                                 Text(
                                     text = state.currentQuality,
                                     color = Color.White,
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -166,16 +185,20 @@ fun YoutubeDetailScreen(
 
                         Spacer(modifier = Modifier.width(8.dp))
 
+                        // Playback Speed Pill
                         Box {
                             Surface(
-                                color = Color.Black.copy(alpha = 0.6f),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.clickable { speedMenuExpanded = true }
+                                color = Color.Black.copy(alpha = 0.5f),
+                                shape = RoundedCornerShape(20.dp),
+                                modifier = Modifier
+                                    .clickable { speedMenuExpanded = true }
+                                    .border(0.5.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(20.dp))
                             ) {
                                 Text(
                                     text = "${state.playbackSpeed}x",
                                     color = Color.White,
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -198,10 +221,14 @@ fun YoutubeDetailScreen(
                     }
                 }
 
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Beautifully Partitioned Subtitles List
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxWidth().weight(1f),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 16.dp)
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     itemsIndexed(
                         items = state.subtitles,
@@ -209,75 +236,20 @@ fun YoutubeDetailScreen(
                     ) { index, block ->
                         val isActive = index == state.currentBlockIndex
 
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(if (isActive) Color(0xFFF5F5F5) else Color.Transparent, RoundedCornerShape(8.dp))
-                                .clickable {
-                                    exoPlayer.seekTo(block.startTimeMs)
-                                    exoPlayer.play()
-                                }
-                                .padding(vertical = 16.dp, horizontal = 16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            val tokens = state.tokenizedBlocks[block.id] ?: emptyList()
-                            val annotatedText = buildAnnotatedString {
-                                tokens.forEach { token ->
-                                    val meta = state.wordMeta[token.value.lowercase()]
-                                    val bgColor = when (meta?.status) {
-                                        UiWordStatus.BLUE -> Color(0xFFE3F2FD)
-                                        UiWordStatus.YELLOW -> Color(0xFFFFF9C4)
-                                        else -> Color.Transparent
-                                    }
-
-                                    val startIndex = length
-                                    append(token.value)
-                                    val endIndex = length
-
-                                    if (bgColor != Color.Transparent) {
-                                        addStyle(SpanStyle(background = bgColor), startIndex, endIndex)
-                                    }
-
-                                    if (token.isWord) {
-                                        addStringAnnotation("WORD", token.value, startIndex, endIndex)
-                                    }
-                                }
+                        SubtitleRowCard(
+                            isActive = isActive,
+                            block = block,
+                            state = state,
+                            onClick = {
+                                exoPlayer.seekTo(block.startTimeMs)
+                                exoPlayer.play()
+                            },
+                            onWordSelected = { word ->
+                                wasPlayingWhenClicked = exoPlayer.isPlaying
+                                exoPlayer.pause()
+                                viewModel.onWordClicked(word, block.sourceText)
                             }
-
-                            androidx.compose.foundation.text.ClickableText(
-                                text = annotatedText,
-                                style = MaterialTheme.typography.bodyLarge.copy(
-                                    fontSize = 20.sp,
-                                    fontWeight = if (isActive) FontWeight.Medium else FontWeight.Normal,
-                                    textAlign = TextAlign.Center
-                                ),
-                                onClick = { offset ->
-                                    annotatedText.getStringAnnotations("WORD", offset, offset)
-                                        .firstOrNull()?.let { annotation ->
-                                            // НОВОЕ: Запоминаем, играло ли видео, и ставим на паузу
-                                            wasPlayingWhenClicked = exoPlayer.isPlaying
-                                            exoPlayer.pause()
-
-                                            viewModel.onWordClicked(annotation.item, block.sourceText)
-                                        }
-                                }
-                            )
-
-                            Spacer(modifier = Modifier.height(6.dp))
-
-                            val displayedTranslation = when (state.translationMode) {
-                                TranslationMode.YOUTUBE_NATIVE -> block.translatedText ?: ""
-                                TranslationMode.LOCAL_ML_KIT -> block.mlKitTranslatedText ?: "Перевод (ML Kit)..."
-                                TranslationMode.ADVANCED_ONNX -> block.onnxTranslatedText ?: "Перевод (ONNX)..."
-                            }
-
-                            Text(
-                                text = displayedTranslation,
-                                color = Color.Gray,
-                                fontSize = 16.sp,
-                                textAlign = TextAlign.Center
-                            )
-                        }
+                        )
                     }
                 }
             }
@@ -290,46 +262,59 @@ fun YoutubeDetailScreen(
                 onMarkAsKnown = { word, cardId -> viewModel.onMarkAsKnown(word, cardId) },
                 onMarkAsIgnored = { word -> viewModel.onMarkAsIgnored(word) },
                 onChangeLearningStatus = { cardId, word, lStatus -> viewModel.onChangeLearningStatus(cardId, word, lStatus) },
-                onDismiss = {
-                    // ИЗМЕНЕНИЕ: Просто закрываем. LaunchedEffect сам разберется, включать ли видео.
-                    viewModel.dismissPopup()
-                }
+                onDismiss = { viewModel.dismissPopup() }
             )
         }
 
+        // Settings BottomSheet Redesign (Clean M3 Sheet)
         if (showSettings) {
-            ModalBottomSheet(onDismissRequest = { showSettings = false }) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Режим перевода", style = MaterialTheme.typography.titleLarge)
+            ModalBottomSheet(
+                onDismissRequest = { showSettings = false },
+                dragHandle = { BottomSheetDefaults.DragHandle() },
+                containerColor = MaterialTheme.colorScheme.surface
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp)
+                        .padding(bottom = 40.dp)
+                ) {
+                    Text(
+                        "Translation Engines",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
                     Spacer(modifier = Modifier.height(16.dp))
 
                     TranslationMode.entries.forEach { mode ->
+                        val isEnabled = mode != TranslationMode.YOUTUBE_NATIVE || state.hasYoutubeTranslation
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable(enabled = mode != TranslationMode.YOUTUBE_NATIVE || state.hasYoutubeTranslation) {
-                                    viewModel.setTranslationMode(mode)
-                                }
-                                .padding(vertical = 4.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable(enabled = isEnabled) { viewModel.setTranslationMode(mode) }
+                                .padding(vertical = 12.dp, horizontal = 8.dp)
                         ) {
                             RadioButton(
                                 selected = state.translationMode == mode,
                                 onClick = { viewModel.setTranslationMode(mode) },
-                                enabled = mode != TranslationMode.YOUTUBE_NATIVE || state.hasYoutubeTranslation
+                                enabled = isEnabled
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(12.dp))
                             Text(
                                 text = mode.title,
-                                color = if (mode == TranslationMode.YOUTUBE_NATIVE && !state.hasYoutubeTranslation) Color.Gray else Color.Unspecified
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = if (isEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.secondary
                             )
                         }
                     }
 
                     Spacer(modifier = Modifier.height(24.dp))
-                    HorizontalDivider()
-                    Spacer(modifier = Modifier.height(16.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+                    Spacer(modifier = Modifier.height(24.dp))
 
+                    // Dangerous cache cleaning action styled elegantly
                     Button(
                         onClick = {
                             showSettings = false
@@ -339,14 +324,118 @@ fun YoutubeDetailScreen(
                             containerColor = MaterialTheme.colorScheme.errorContainer,
                             contentColor = MaterialTheme.colorScheme.onErrorContainer
                         ),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
                     ) {
-                        Icon(Icons.Default.Warning, contentDescription = "Очистить кэш")
+                        Icon(Icons.Default.Warning, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Очистить кэш и загрузить заново")
+                        Text("Reset Subtitle Cache & Refresh")
                     }
+                }
+            }
+        }
+    }
+}
 
-                    Spacer(modifier = Modifier.height(32.dp))
+@Composable
+fun SubtitleRowCard(
+    isActive: Boolean,
+    block: com.example.linter.domain.model.SubtitleBlock,
+    state: YoutubeDetailState,
+    onClick: () -> Unit,
+    onWordSelected: (String) -> Unit
+) {
+    val darkTheme = isSystemInDarkTheme()
+
+    // Smooth transition animations for state switching
+    val cardBackground by animateColorAsState(
+        targetValue = if (isActive) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
+        label = "BgAnim"
+    )
+    val cardElevation by animateDpAsState(
+        targetValue = if (isActive) 2.dp else 0.dp,
+        label = "ElevAnim"
+    )
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = cardBackground),
+        elevation = CardDefaults.cardElevation(defaultElevation = cardElevation)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp, horizontal = 16.dp)
+        ) {
+            // Elegant left border indicator for active states instead of harsh overall background
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(if (isActive) MaterialTheme.colorScheme.tertiary else Color.Transparent)
+            )
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                val tokens = state.tokenizedBlocks[block.id] ?: emptyList()
+                val annotatedText = buildAnnotatedString {
+                    tokens.forEach { token ->
+                        val meta = state.wordMeta[token.value.lowercase()]
+                        val bgColor = when (meta?.status) {
+                            UiWordStatus.BLUE -> if (darkTheme) BlueWordDark else BlueWordLight
+                            UiWordStatus.YELLOW -> if (darkTheme) YellowWordDark else YellowWordLight
+                            else -> Color.Transparent
+                        }
+
+                        val startIndex = length
+                        append(token.value)
+                        val endIndex = length
+
+                        if (bgColor != Color.Transparent) {
+                            addStyle(SpanStyle(background = bgColor), startIndex, endIndex)
+                        }
+
+                        if (token.isWord) {
+                            addStringAnnotation("WORD", token.value, startIndex, endIndex)
+                        }
+                    }
+                }
+
+                androidx.compose.foundation.text.ClickableText(
+                    text = annotatedText,
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontSize = 18.sp,
+                        fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                        lineHeight = 24.sp
+                    ),
+                    onClick = { offset ->
+                        annotatedText.getStringAnnotations("WORD", offset, offset)
+                            .firstOrNull()?.let { annotation ->
+                                onWordSelected(annotation.item)
+                            }
+                    }
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                val displayedTranslation = when (state.translationMode) {
+                    TranslationMode.YOUTUBE_NATIVE -> block.translatedText ?: ""
+                    TranslationMode.LOCAL_ML_KIT -> block.mlKitTranslatedText ?: ""
+                    TranslationMode.ADVANCED_ONNX -> block.onnxTranslatedText ?: ""
+                }
+
+                if (displayedTranslation.isNotBlank()) {
+                    Text(
+                        text = displayedTranslation,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.secondary,
+                        lineHeight = 20.sp
+                    )
                 }
             }
         }
