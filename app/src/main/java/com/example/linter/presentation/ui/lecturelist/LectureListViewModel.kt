@@ -11,16 +11,22 @@ import kotlinx.coroutines.launch
 
 class LectureListViewModel : ViewModel() {
     private val repository = AppModule.lectureRepository
+    private val reviewRepository = AppModule.reviewRepository
 
     private val _lectures = MutableStateFlow<List<Lecture>>(emptyList())
     val lectures: StateFlow<List<Lecture>> = _lectures.asStateFlow()
 
-    private val reviewRepository = AppModule.reviewRepository
-    private val _dueCardsCount = MutableStateFlow(0)
-    val dueCardsCount: StateFlow<Int> = _dueCardsCount.asStateFlow()
+    private val _enDueCount = MutableStateFlow(0)
+    val enDueCount: StateFlow<Int> = _enDueCount.asStateFlow()
+
+    private val _frDueCount = MutableStateFlow(0)
+    val frDueCount: StateFlow<Int> = _frDueCount.asStateFlow()
 
     fun loadDueCount() {
-        viewModelScope.launch { _dueCardsCount.value = reviewRepository.getDueCardsCount() }
+        viewModelScope.launch {
+            _enDueCount.value = reviewRepository.getDueCardsCount("en")
+            _frDueCount.value = reviewRepository.getDueCardsCount("fr")
+        }
     }
 
     fun loadLectures() {

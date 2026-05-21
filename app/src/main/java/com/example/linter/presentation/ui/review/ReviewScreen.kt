@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -46,37 +47,49 @@ fun ReviewScreen(
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Повторение", fontSize = 20.sp)
-                        Spacer(modifier = Modifier.width(16.dp))
+                        Text("Повторение (${viewModel.selectedLanguage.uppercase()})", fontSize = 18.sp)
+                        Spacer(modifier = Modifier.width(12.dp))
 
                         if (!uiState.isFinished && !uiState.isLoading) {
                             Text(
                                 text = "${uiState.blueCount}",
                                 color = Color(0xFF2196F3),
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp,
+                                fontSize = 16.sp,
                                 textDecoration = if (uiState.currentBucket == CardBucket.BLUE) TextDecoration.Underline else null
                             )
-                            Text(text = " • ", color = Color.LightGray, fontSize = 18.sp)
+                            Text(text = " • ", color = Color.LightGray, fontSize = 16.sp)
                             Text(
                                 text = "${uiState.redCount}",
                                 color = Color(0xFFF44336),
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp,
+                                fontSize = 16.sp,
                                 textDecoration = if (uiState.currentBucket == CardBucket.RED) TextDecoration.Underline else null
                             )
-                            Text(text = " • ", color = Color.LightGray, fontSize = 18.sp)
+                            Text(text = " • ", color = Color.LightGray, fontSize = 16.sp)
                             Text(
                                 text = "${uiState.greenCount}",
                                 color = Color(0xFF4CAF50),
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp,
+                                fontSize = 16.sp,
                                 textDecoration = if (uiState.currentBucket == CardBucket.GREEN) TextDecoration.Underline else null
                             )
                         }
                     }
                 },
-                navigationIcon = { TextButton(onClick = onFinish) { Text("Закрыть") } }
+                navigationIcon = { TextButton(onClick = onFinish) { Text("Закрыть") } },
+                actions = {
+                    // Кнопка откладывания карточки до завтра
+                    if (!uiState.isFinished && !uiState.isLoading && uiState.currentItem != null) {
+                        IconButton(onClick = { viewModel.postponeCurrentCard() }) {
+                            Icon(
+                                imageVector = Icons.Default.DateRange,
+                                contentDescription = "Отложить карточку",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
             )
         }
     ) { padding ->

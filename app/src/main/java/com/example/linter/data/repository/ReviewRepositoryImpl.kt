@@ -6,6 +6,7 @@ import com.example.linter.data.fsrs.FlashCard
 import com.example.linter.data.fsrs.Grade
 import com.example.linter.data.local.ObjectBox
 import com.example.linter.data.local.entity.FlashCardEntity_
+import com.example.linter.data.local.entity.ContextCardEntity
 import com.example.linter.domain.model.LearningStatus
 import com.example.linter.domain.model.MultiTranslation
 import com.example.linter.domain.model.WordMeta
@@ -13,6 +14,7 @@ import com.example.linter.domain.model.TextTokenizer
 import com.example.linter.domain.repository.ReviewItem
 import com.example.linter.domain.repository.ReviewRepository
 import com.example.linter.domain.repository.VocabularyRepository
+import java.util.Calendar
 
 class ReviewRepositoryImpl(
     private val vocabularyRepository: VocabularyRepository,
@@ -29,18 +31,37 @@ class ReviewRepositoryImpl(
             1.0824, 1.9813, 0.0953, 0.2975, 2.2042, 0.2407, 2.9466, 0.0034, 0.5492, 0.7765, 0.4657)
     )
 
-    override suspend fun getDueCardsCount(): Int {
-        val now = System.currentTimeMillis()
-        return flashCardBox.query(FlashCardEntity_.dueDateMillis.lessOrEqual(now))
-            .build()
-            .find()
-            .count { it.contextCardId > 0L }
+    // Автоопределение языка контекстной карты без изменения схем таблиц
+    private fun getCardLanguage(card: ContextCardEntity): String {
+        if (card.lectureId > 0L) {
+            val lecture = ObjectBox.lectureBox[card.lectureId]
+            if (lecture != null) return lecture.language
+        }
+        if (card.youtubeVideoId > 0L) {
+            // Если в предложении есть специфические французские символы — это французский
+            val isFrench = card.contextSentence.any { it in listOf('é', 'è', 'à', 'ç', 'ù', 'œ', 'â', 'ê', 'î', 'ô', 'û', 'ë') }
+            if (isFrench) return "fr"
+        }
+        return "en"
     }
 
-    override suspend fun getDueReviewItems(lookaheadMs: Long): List<ReviewItem> {
-        val threshold = System.currentTimeMillis() + lookaheadMs
+    override suspend fun getDueCardsCount(lang: String): Int {
+        val now = System.currentTimeMillis()
+        val dueEntities = flashCardBox.query(FlashCardEntity_.dueDateMillis.lessOrEqual(now))
+            .build()
+            .find()
 
-        // Сортируем, чтобы сначала шли самые просроченные (настоящие due), а схлопнутые (lookahead) были в конце батча
+        return dueEntities.count { entity ->
+            if (entity.contextCardId <= 0L || entity.postponeUntilMillis > now) return@count false
+            val card = contextCardBox[entity.contextCardId] ?: return@count false
+            getCardLanguage(card) == lang
+        }
+    }
+
+    override suspend fun getDueReviewItems(lang: String, lookaheadMs: Long): List<ReviewItem> {
+        val threshold = System.currentTimeMillis() + lookaheadMs
+        val now = System.currentTimeMillis()
+
         val dueEntities = flashCardBox.query(FlashCardEntity_.dueDateMillis.lessOrEqual(threshold))
             .order(FlashCardEntity_.dueDateMillis)
             .build()
@@ -50,11 +71,11 @@ class ReviewRepositoryImpl(
         val learningPhrases = vocabularyRepository.getLearningPhrasesMetas()
 
         for (entity in dueEntities) {
-            if (entity.contextCardId <= 0L) { flashCardBox.remove(entity); continue }
-            val contextCard = contextCardBox[entity.contextCardId]
-            if (contextCard == null || contextCard.vocabularyItemId <= 0L) { flashCardBox.remove(entity); continue }
-            val vocabItem = vocabBox[contextCard.vocabularyItemId]
-            if (vocabItem == null) { flashCardBox.remove(entity); continue }
+            if (entity.contextCardId <= 0L || entity.postponeUntilMillis > now) continue
+            val contextCard = contextCardBox[entity.contextCardId] ?: continue
+            if (getCardLanguage(contextCard) != lang) continue // Фильтруем по запрашиваемому языку
+
+            val vocabItem = vocabBox[contextCard.vocabularyItemId] ?: continue
 
             val fsrsCard = FlashCard(
                 id = entity.id,
@@ -68,7 +89,6 @@ class ReviewRepositoryImpl(
             )
             val grades = fsrs.calculate(fsrsCard)
 
-            // "Живой текст" - Подготавливаем токены для контекстного предложения
             val tokens = tokenizer.tokenize(contextCard.contextSentence)
             val wordsInSentence = tokens.filter { it.isWord }.map { it.value.lowercase() }.distinct()
             val wordMeta = vocabularyRepository.getWordMetas(wordsInSentence)
@@ -82,7 +102,6 @@ class ReviewRepositoryImpl(
                 }
             }
 
-            // Находим целевое слово, чтобы выделить его визуально
             val targetWordIndex = contextCard.contextSentence.indexOf(vocabItem.text, ignoreCase = true)
             val targetRange = if (targetWordIndex >= 0) targetWordIndex until (targetWordIndex + vocabItem.text.length) else null
 
@@ -92,7 +111,7 @@ class ReviewRepositoryImpl(
                     contextCardId = contextCard.id,
                     word = vocabItem.text,
                     contextSentence = contextCard.contextSentence,
-                    translations = MultiTranslation(contextCard.translation, contextCard.translationOnnx, contextCard.translationCloud),
+                    translations = MultiTranslation(contextCard.translation, contextCard.translationOnnx, contextCard.translationCloud, contextCard.translationCustom),
                     fsrsCard = fsrsCard,
                     grades = grades,
                     tokens = tokens,
@@ -134,5 +153,20 @@ class ReviewRepositoryImpl(
 
             vocabularyRepository.updateCardStatus(contextCard.id, newStatus)
         }
+    }
+
+    override suspend fun postponeCard(flashCardEntityId: Long) {
+        val entity = flashCardBox[flashCardEntityId] ?: return
+
+        // Откладываем карточку ровно до 4:00 утра следующего дня
+        val calendar = Calendar.getInstance().apply {
+            add(Calendar.DAY_OF_YEAR, 1)
+            set(Calendar.HOUR_OF_DAY, 4)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        entity.postponeUntilMillis = calendar.timeInMillis
+        flashCardBox.put(entity)
     }
 }

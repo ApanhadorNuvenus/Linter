@@ -14,16 +14,21 @@ data class ReviewItem(
     val translations: MultiTranslation,
     val fsrsCard: FlashCard,
     val grades: List<Grade>,
-    // Добавлены поля для живого текста:
     val tokens: List<Token>,
     val wordMeta: Map<String, WordMeta>,
     val phraseRanges: List<Pair<IntRange, WordMeta>>,
-    val targetWordRange: IntRange? // Чтобы подчеркнуть то самое слово, которое мы повторяем
+    val targetWordRange: IntRange?
 )
 
 interface ReviewRepository {
-    suspend fun getDueCardsCount(): Int
-    // Добавлен параметр lookaheadMs (по умолчанию 10 минут)
-    suspend fun getDueReviewItems(lookaheadMs: Long = 600_000L): List<ReviewItem>
+    // Получение счетчика просроченных карточек для конкретного языка
+    suspend fun getDueCardsCount(lang: String): Int
+
+    // Получение списка карточек для повторения конкретного языка
+    suspend fun getDueReviewItems(lang: String, lookaheadMs: Long = 600_000L): List<ReviewItem>
+
     suspend fun submitReview(flashCardEntityId: Long, grade: Grade)
+
+    // Отложить карточку до завтра
+    suspend fun postponeCard(flashCardEntityId: Long)
 }

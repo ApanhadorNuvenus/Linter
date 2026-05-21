@@ -1,5 +1,6 @@
 package com.example.linter.presentation.ui.review
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.linter.data.fsrs.Grade
@@ -33,9 +34,14 @@ data class ReviewUiState(
     val currentBucket: CardBucket? = null
 )
 
-class ReviewViewModel : ViewModel() {
+class ReviewViewModel(
+    savedStateHandle: SavedStateHandle
+) : ViewModel() {
     private val reviewRepository = AppModule.reviewRepository
     private val vocabularyRepository = AppModule.vocabularyRepository
+
+    // Извлекаем выбранный язык из аргументов навигации (default = "en")
+    val selectedLanguage: String = savedStateHandle.get<String>("lang") ?: "en"
 
     private val _uiState = MutableStateFlow(ReviewUiState())
     val uiState: StateFlow<ReviewUiState> = _uiState.asStateFlow()
@@ -76,7 +82,7 @@ class ReviewViewModel : ViewModel() {
 
     private fun loadDueCards() {
         viewModelScope.launch {
-            val items = reviewRepository.getDueReviewItems(lookaheadMs = 600_000L)
+            val items = reviewRepository.getDueReviewItems(lang = selectedLanguage, lookaheadMs = 600_000L)
             val (b, r, g) = calculateCounters(items)
             val firstItem = items.firstOrNull()
 
@@ -104,32 +110,38 @@ class ReviewViewModel : ViewModel() {
 
         viewModelScope.launch {
             reviewRepository.submitReview(currentItem.flashCardEntityId, grade)
+            advanceQueue()
+        }
+    }
 
-            val newQueue = state.queue.drop(1).toMutableList()
+    // Отложить текущую карточку
+    fun postponeCurrentCard() {
+        val state = _uiState.value
+        val currentItem = state.currentItem ?: return
 
-            if (grade.interval < 1) {
-                val updatedFsrs = currentItem.fsrsCard.copy(
-                    reviewCount = currentItem.fsrsCard.reviewCount + 1,
-                    interval = grade.interval,
-                    phase = com.example.linter.data.fsrs.CardPhase.Review.value
-                )
-                newQueue.add(currentItem.copy(fsrsCard = updatedFsrs))
-            }
+        viewModelScope.launch {
+            reviewRepository.postponeCard(currentItem.flashCardEntityId)
+            advanceQueue()
+        }
+    }
 
-            if (newQueue.isEmpty()) {
-                val moreItems = reviewRepository.getDueReviewItems(lookaheadMs = 600_000L)
-                if (moreItems.isEmpty()) {
-                    _uiState.value = state.copy(queue = emptyList(), currentItem = null, currentBucket = null, isFinished = true, showAnswer = false, blueCount = 0, redCount = 0, greenCount = 0)
-                } else {
-                    val (b, r, g) = calculateCounters(moreItems)
-                    val nextItem = moreItems.first()
-                    _uiState.value = state.copy(queue = moreItems, currentItem = nextItem, currentBucket = getBucketForItem(nextItem), showAnswer = false, blueCount = b, redCount = r, greenCount = g)
-                }
+    private suspend fun advanceQueue() {
+        val state = _uiState.value
+        val newQueue = state.queue.drop(1)
+
+        if (newQueue.isEmpty()) {
+            val moreItems = reviewRepository.getDueReviewItems(lang = selectedLanguage, lookaheadMs = 600_000L)
+            if (moreItems.isEmpty()) {
+                _uiState.value = state.copy(queue = emptyList(), currentItem = null, currentBucket = null, isFinished = true, showAnswer = false, blueCount = 0, redCount = 0, greenCount = 0)
             } else {
-                val (b, r, g) = calculateCounters(newQueue)
-                val nextItem = newQueue.first()
-                _uiState.value = state.copy(queue = newQueue, currentItem = nextItem, currentBucket = getBucketForItem(nextItem), showAnswer = false, blueCount = b, redCount = r, greenCount = g)
+                val (b, r, g) = calculateCounters(moreItems)
+                val nextItem = moreItems.first()
+                _uiState.value = state.copy(queue = moreItems, currentItem = nextItem, currentBucket = getBucketForItem(nextItem), showAnswer = false, blueCount = b, redCount = r, greenCount = g)
             }
+        } else {
+            val (b, r, g) = calculateCounters(newQueue)
+            val nextItem = newQueue.first()
+            _uiState.value = state.copy(queue = newQueue, currentItem = nextItem, currentBucket = getBucketForItem(nextItem), showAnswer = false, blueCount = b, redCount = r, greenCount = g)
         }
     }
 
@@ -196,7 +208,7 @@ class ReviewViewModel : ViewModel() {
             }
 
             if (meta.status == UiWordStatus.BLUE || meta.status == UiWordStatus.TRANSPARENT) {
-                vocabularyRepository.fetchMultiTranslations(word, "en")
+                vocabularyRepository.fetchMultiTranslations(word, selectedLanguage)
                     .collect { progressiveTrans ->
                         _uiState.value = state.copy(
                             popupState = PopupState.NewWord(word, progressiveTrans, currentItem.contextSentence)
@@ -241,7 +253,6 @@ class ReviewViewModel : ViewModel() {
         }
     }
 
-    // Сохранение отредактированного перевода в сессии повторения
     fun onSaveCustomTranslation(cardId: Long, word: String, customTranslation: String) {
         viewModelScope.launch {
             vocabularyRepository.updateCustomTranslation(cardId, customTranslation)
@@ -253,15 +264,12 @@ class ReviewViewModel : ViewModel() {
         val state = _uiState.value
         val currentItem = state.currentItem ?: return
 
-        // Подгружаем мета-данные из репозитория
         val updatedMeta = vocabularyRepository.getWordMetas(currentItem.wordMeta.keys.toList())
-
-        // Извлекаем обновленный кастомный перевод и записываем его напрямую в текущий ReviewItem
         val updatedTranslations = updatedMeta[currentItem.word.lowercase()]?.translations ?: currentItem.translations
 
         val updatedItem = currentItem.copy(
             wordMeta = updatedMeta,
-            translations = updatedTranslations // Обновление translations внутри UI-стейта
+            translations = updatedTranslations
         )
 
         val newQueue = state.queue.toMutableList()
