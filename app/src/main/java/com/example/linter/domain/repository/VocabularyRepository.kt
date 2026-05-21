@@ -3,6 +3,7 @@ package com.example.linter.domain.repository
 import com.example.linter.domain.model.LearningStatus
 import com.example.linter.domain.model.MultiTranslation
 import com.example.linter.domain.model.WordMeta
+import kotlinx.coroutines.flow.Flow
 
 
 interface VocabularyRepository {
@@ -10,7 +11,7 @@ interface VocabularyRepository {
     suspend fun getLearningPhrasesMetas(): List<Pair<String, WordMeta>>
 
     // ИЗМЕНЕНИЕ: Возвращает MultiTranslation
-    suspend fun fetchMultiTranslations(wordOrPhrase: String, sourceLang: String): MultiTranslation
+    suspend fun fetchMultiTranslations(wordOrPhrase: String, sourceLang: String): Flow<MultiTranslation>
     suspend fun updateCustomTranslation(cardId: Long, customTranslation: String?)
 
     suspend fun markAsKnown(word: String)

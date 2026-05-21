@@ -46,6 +46,8 @@ class ReviewViewModel : ViewModel() {
 
     private var dragStartTokenIndex: Int = -1
 
+    private var translationJob: kotlinx.coroutines.Job? = null
+
     init {
         loadDueCards()
     }
@@ -193,7 +195,8 @@ class ReviewViewModel : ViewModel() {
         val state = _uiState.value
         val currentItem = state.currentItem ?: return
 
-        viewModelScope.launch {
+        translationJob?.cancel()
+        translationJob = viewModelScope.launch {
             val meta = if (word.contains(" ")) {
                 vocabularyRepository.getWordMetas(listOf(word))[word] ?: WordMeta(UiWordStatus.BLUE)
             } else {
@@ -201,14 +204,22 @@ class ReviewViewModel : ViewModel() {
             }
 
             if (meta.status == UiWordStatus.BLUE || meta.status == UiWordStatus.TRANSPARENT) {
-                // ИЗМЕНЕНИЕ: Используем fetchMultiTranslations
-                val trans = vocabularyRepository.fetchMultiTranslations(word, "en")
-                _uiState.value = state.copy(popupState = PopupState.NewWord(word,
-                    trans, currentItem.contextSentence))
+                // Асинхронно собираем поток переводов и обновляем карточку в реальном времени
+                vocabularyRepository.fetchMultiTranslations(word, "en")
+                    .collect { progressiveTrans ->
+                        _uiState.value = state.copy(
+                            popupState = PopupState.NewWord(word, progressiveTrans, currentItem.contextSentence)
+                        )
+                    }
             } else {
                 _uiState.value = state.copy(popupState = PopupState.LearningWord(word, meta, currentItem.contextSentence))
             }
         }
+    }
+
+    fun dismissPopup() {
+        translationJob?.cancel() // Отменяем сбор при закрытии
+        _uiState.value = _uiState.value.copy(popupState = PopupState.Hidden, selectionRange = null)
     }
 
     // ИЗМЕНЕНИЕ: Принимаем MultiTranslation
@@ -264,10 +275,5 @@ class ReviewViewModel : ViewModel() {
             vocabularyRepository.updateCustomTranslation(cardId, customTranslation)
             refreshCurrentCard()
         }
-    }
-
-
-    fun dismissPopup() {
-        _uiState.value = _uiState.value.copy(popupState = PopupState.Hidden, selectionRange = null)
     }
 }

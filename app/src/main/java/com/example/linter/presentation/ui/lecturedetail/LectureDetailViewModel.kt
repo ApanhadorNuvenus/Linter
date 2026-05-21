@@ -12,6 +12,7 @@ import com.example.linter.domain.model.MultiTranslation // НОВОЕ
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.last
 import kotlinx.coroutines.launch
 import java.text.BreakIterator
 import kotlin.math.max
@@ -56,15 +57,22 @@ class LectureDetailViewModel : ViewModel() {
     val uiState: StateFlow<LectureDetailUiState> = _uiState.asStateFlow()
 
     private var dragStartTokenIndex: Int = -1
+    private var translationJob: kotlinx.coroutines.Job? = null
 
     fun loadLecture(lectureId: Long) {
         viewModelScope.launch {
             val lecture = lectureRepository.getLectureById(lectureId) ?: return@launch
+
+            // ИСПРАВЛЕНИЕ: Запускаем прогрев параллельно. Основной поток не ждет его окончания.
+            launch {
+                AppModule.onnxTranslator.warmUp(lecture.language)
+            }
+
             val tokens = tokenizer.tokenize(lecture.text)
             val words = tokens.filter { it.isWord }.map { it.value.lowercase() }.distinct()
-
             val meta = vocabularyRepository.getWordMetas(words)
 
+            // Лекция откроется мгновенно (за миллисекунды)
             _uiState.value = _uiState.value.copy(
                 lectureId = lectureId,
                 title = lecture.title,
@@ -149,7 +157,8 @@ class LectureDetailViewModel : ViewModel() {
         val state = _uiState.value
         val contextSentence = extractSentence(state.text, startIndex)
 
-        viewModelScope.launch {
+        translationJob?.cancel()
+        translationJob = viewModelScope.launch {
             val meta = if (wordOrPhrase.contains(" ")) {
                 vocabularyRepository.getWordMetas(listOf(wordOrPhrase))[wordOrPhrase] ?: WordMeta(UiWordStatus.BLUE)
             } else {
@@ -157,13 +166,22 @@ class LectureDetailViewModel : ViewModel() {
             }
 
             if (meta.status == UiWordStatus.BLUE || meta.status == UiWordStatus.TRANSPARENT) {
-                // ИЗМЕНЕНИЕ: Используем fetchMultiTranslations
-                val trans = vocabularyRepository.fetchMultiTranslations(wordOrPhrase, state.language)
-                _uiState.value = state.copy(popupState = PopupState.NewWord(wordOrPhrase, trans, contextSentence))
+                // Асинхронно собираем поток переводов и обновляем карточку в реальном времени
+                vocabularyRepository.fetchMultiTranslations(wordOrPhrase, state.language)
+                    .collect { progressiveTrans ->
+                        _uiState.value = _uiState.value.copy(
+                            popupState = PopupState.NewWord(wordOrPhrase, progressiveTrans, contextSentence)
+                        )
+                    }
             } else {
                 _uiState.value = state.copy(popupState = PopupState.LearningWord(wordOrPhrase, meta, contextSentence))
             }
         }
+    }
+
+    fun dismissPopup() {
+        translationJob?.cancel() // Отменяем сбор при закрытии
+        _uiState.value = _uiState.value.copy(popupState = PopupState.Hidden, selectionRange = null)
     }
 
     // ИЗМЕНЕНИЕ: Принимаем MultiTranslation
@@ -214,10 +232,6 @@ class LectureDetailViewModel : ViewModel() {
         }
     }
 
-    fun dismissPopup() {
-        _uiState.value = _uiState.value.copy(popupState = PopupState.Hidden, selectionRange = null)
-    }
-
     fun clearSelection() {
         _uiState.value = _uiState.value.copy(selectionRange = null)
         dragStartTokenIndex = -1
@@ -256,8 +270,10 @@ class LectureDetailViewModel : ViewModel() {
                 if (selectedAsLearning.contains(word)) {
                     val token = state.tokens.find { it.value.lowercase() == word }
                     val context = if (token != null) extractSentence(state.text, token.startIndex) else ""
-                    // ИЗМЕНЕНИЕ: Используем fetchMultiTranslations
-                    val trans = vocabularyRepository.fetchMultiTranslations(word, state.language)
+
+                    // Оптимизация: .last() ожидает окончания работы всех запущенных переводчиков и выдает финальный перевод
+                    val trans = vocabularyRepository.fetchMultiTranslations(word, state.language).last()
+
                     vocabularyRepository.createLearningCard(word, state.lectureId, 0L, context, trans, LearningStatus.NEW)
                 } else {
                     vocabularyRepository.markAsKnown(word)

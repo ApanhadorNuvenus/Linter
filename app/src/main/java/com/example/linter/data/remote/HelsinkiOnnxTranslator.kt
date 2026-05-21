@@ -207,4 +207,16 @@ class HelsinkiOnnxTranslator(private val context: Context) : TextTranslator {
             Result.success("❌ Офлайн-модель для '$sourceLang' не установлена")
         }
     }
+
+    override suspend fun warmUp(lang: String) = withContext(Dispatchers.IO) {
+        try {
+            loadModelsForLang(lang)
+        } catch (e: Exception) {
+            // Игнорируем ошибки при фоновом прогреве
+        }
+    }
+
+    override fun isModelLoaded(lang: String): Boolean {
+        return currentLang == lang && encoderSession != null && decoderSession != null
+    }
 }

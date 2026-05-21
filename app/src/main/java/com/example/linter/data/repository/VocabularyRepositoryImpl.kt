@@ -14,9 +14,8 @@ import com.example.linter.domain.repository.VocabularyRepository
 import com.example.linter.domain.model.TextTranslator
 import com.example.linter.di.AppModule
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
 
 class VocabularyRepositoryImpl(
     private val translator: TextTranslator
@@ -103,22 +102,69 @@ class VocabularyRepositoryImpl(
         result
     }
 
-    override suspend fun fetchMultiTranslations(wordOrPhrase: String, sourceLang: String): MultiTranslation = coroutineScope {
+    override suspend fun fetchMultiTranslations(wordOrPhrase: String, sourceLang: String): Flow<MultiTranslation> = channelFlow {
         val prefs = AppModule.context.getSharedPreferences("linter_settings", Context.MODE_PRIVATE)
         val showMl = prefs.getBoolean("pref_show_ml_kit", true)
         val showOnnx = prefs.getBoolean("pref_show_onnx", true)
         val showCloud = prefs.getBoolean("pref_show_cloud", true)
 
-        val mlDeferred = if (showMl) async { translator.translate(wordOrPhrase, sourceLang, "ru") } else null
-        val onnxDeferred = if (showOnnx) async { AppModule.onnxTranslator.translate(wordOrPhrase, sourceLang, "ru") } else null
-        val cloudDeferred = if (showCloud) async { AppModule.cloudTranslator.translate(wordOrPhrase, sourceLang, "ru") } else null
+        // Проверяем, прогрета ли локальная модель для текущего языка
+        val isOnnxLoaded = if (showOnnx) AppModule.onnxTranslator.isModelLoaded(sourceLang) else true
 
-        MultiTranslation(
-            mlKit = mlDeferred?.await()?.getOrNull(),
-            onnx = onnxDeferred?.await()?.getOrNull(),
-            cloud = cloudDeferred?.await()?.getOrNull(),
-            custom = null
-        )
+        var currentTranslations = MultiTranslation()
+
+        if (!isOnnxLoaded) {
+            // СЦЕНАРИЙ 1. ХОЛОДНЫЙ ЗАПУСК: мгновенно отправляем пустой стейт для отрисовки скелетонов
+            send(currentTranslations)
+
+            if (showMl) {
+                launch {
+                    val res = translator.translate(wordOrPhrase, sourceLang, "ru").getOrNull()
+                    currentTranslations = currentTranslations.copy(mlKit = res ?: "Ошибка перевода")
+                    send(currentTranslations)
+                }
+            }
+            if (showOnnx) {
+                launch {
+                    val res = AppModule.onnxTranslator.translate(wordOrPhrase, sourceLang, "ru").getOrNull()
+                    currentTranslations = currentTranslations.copy(onnx = res ?: "Ошибка перевода")
+                    send(currentTranslations)
+                }
+            }
+            if (showCloud) {
+                launch {
+                    val res = AppModule.cloudTranslator.translate(wordOrPhrase, sourceLang, "ru").getOrNull()
+                    currentTranslations = currentTranslations.copy(cloud = res ?: "Ошибка перевода")
+                    send(currentTranslations)
+                }
+            }
+        } else {
+            // СЦЕНАРИЙ 2. ГОРЯЧИЙ ЗАПУСК: ждем быстрые локальные модели вместе, исключая мерцание скелетонов
+            coroutineScope {
+                val mlDeferred = if (showMl) async { translator.translate(wordOrPhrase, sourceLang, "ru").getOrNull() } else null
+                val onnxDeferred = if (showOnnx) async { AppModule.onnxTranslator.translate(wordOrPhrase, sourceLang, "ru").getOrNull() } else null
+
+                // Облако (медленное из-за сети) запускаем в фоне, чтобы оно не блокировало открытие окна
+                if (showCloud) {
+                    launch {
+                        val res = AppModule.cloudTranslator.translate(wordOrPhrase, sourceLang, "ru").getOrNull()
+                        currentTranslations = currentTranslations.copy(cloud = res ?: "Ошибка перевода")
+                        send(currentTranslations)
+                    }
+                }
+
+                // Синхронно ожидаем быстрые локальные результаты
+                val mlResult = mlDeferred?.await()
+                val onnxResult = onnxDeferred?.await()
+
+                currentTranslations = currentTranslations.copy(
+                    mlKit = if (showMl) (mlResult ?: "Ошибка перевода") else null,
+                    onnx = if (showOnnx) (onnxResult ?: "Ошибка перевода") else null
+                )
+                // Отправляем готовую структуру один раз — окно откроется мгновенно с заполненным текстом
+                send(currentTranslations)
+            }
+        }
     }
 
     private suspend fun getOrCreateVocabItem(word: String): VocabularyItemEntity = withContext(Dispatchers.IO) {

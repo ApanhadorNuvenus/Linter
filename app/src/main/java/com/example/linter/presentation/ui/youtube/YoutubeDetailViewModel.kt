@@ -58,6 +58,7 @@ class YoutubeDetailViewModel : ViewModel() {
     private var exoPlayer: ExoPlayer? = null
     private var syncJob: Job? = null
     private var translateJob: Job? = null
+    private var translationJob: kotlinx.coroutines.Job? = null
 
     @OptIn(UnstableApi::class)
     fun initVideo(videoId: Long, player: ExoPlayer, isReload: Boolean = false) {
@@ -86,6 +87,10 @@ class YoutubeDetailViewModel : ViewModel() {
 
             if (infoResult.isSuccess) {
                 val info = infoResult.getOrThrow()
+
+                launch {
+                    AppModule.onnxTranslator.warmUp(info.sourceLang)
+                }
 
                 val httpDataSourceFactory = DefaultHttpDataSource.Factory()
                     .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -257,17 +262,27 @@ class YoutubeDetailViewModel : ViewModel() {
     fun onWordClicked(word: String, contextSentence: String) {
         val state = _uiState.value
         val normalized = word.lowercase()
-        viewModelScope.launch {
+
+        translationJob?.cancel()
+        translationJob = viewModelScope.launch {
             val meta = state.wordMeta[normalized] ?: WordMeta(UiWordStatus.BLUE)
             if (meta.status == UiWordStatus.BLUE || meta.status == UiWordStatus.TRANSPARENT) {
-                // ИЗМЕНЕНИЕ: Используем fetchMultiTranslations
-                val trans = vocabRepo.fetchMultiTranslations(normalized, state.sourceLang)
-                _uiState.value = state.copy(popupState = PopupState.NewWord(normalized,
-                    trans, contextSentence))
+                // Асинхронно собираем поток переводов и обновляем карточку в реальном времени
+                vocabRepo.fetchMultiTranslations(normalized, state.sourceLang)
+                    .collect { progressiveTrans ->
+                        _uiState.value = state.copy(
+                            popupState = PopupState.NewWord(normalized, progressiveTrans, contextSentence)
+                        )
+                    }
             } else {
                 _uiState.value = state.copy(popupState = PopupState.LearningWord(normalized, meta, contextSentence))
             }
         }
+    }
+
+    fun dismissPopup() {
+        translationJob?.cancel() // Отменяем сбор при закрытии
+        _uiState.value = _uiState.value.copy(popupState = PopupState.Hidden)
     }
 
     // ИЗМЕНЕНИЕ: Принимаем MultiTranslation
@@ -318,10 +333,6 @@ class YoutubeDetailViewModel : ViewModel() {
         }
     }
 
-
-    fun dismissPopup() {
-        _uiState.value = _uiState.value.copy(popupState = PopupState.Hidden)
-    }
 
     fun releasePlayer() {
         exoPlayer?.let { player ->

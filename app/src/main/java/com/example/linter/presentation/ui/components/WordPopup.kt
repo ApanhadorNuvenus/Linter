@@ -1,5 +1,6 @@
 package com.example.linter.presentation.ui.components
 
+import android.content.Context
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -27,7 +29,7 @@ import com.example.linter.domain.model.MultiTranslation
 import com.example.linter.presentation.ui.lecturedetail.PopupState
 
 @Composable
-fun TranslationCard(title: String, text: String, icon: String, accentColor: Color) {
+fun TranslationCard(title: String, text: String?, icon: String, accentColor: Color) {
     Card(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
@@ -52,7 +54,7 @@ fun TranslationCard(title: String, text: String, icon: String, accentColor: Colo
                 Text(icon, fontSize = 16.sp)
             }
             Spacer(modifier = Modifier.width(12.dp))
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = title.uppercase(),
                     fontSize = 10.sp,
@@ -60,12 +62,25 @@ fun TranslationCard(title: String, text: String, icon: String, accentColor: Colo
                     color = accentColor,
                     letterSpacing = 1.sp
                 )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = text,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+                Spacer(modifier = Modifier.height(4.dp))
+
+                if (text == null) {
+                    // Красивый скелетон-индикатор загрузки конкретного источника перевода
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth(0.5f)
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp)),
+                        color = accentColor.copy(alpha = 0.4f),
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                } else {
+                    Text(
+                        text = text,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
             }
         }
     }
@@ -74,15 +89,21 @@ fun TranslationCard(title: String, text: String, icon: String, accentColor: Colo
 @Composable
 fun MultiTranslationView(translations: MultiTranslation) {
     val dark = isSystemInDarkTheme()
+    val prefs = LocalContext.current.getSharedPreferences("linter_settings", Context.MODE_PRIVATE)
+
+    val showMl = prefs.getBoolean("pref_show_ml_kit", true)
+    val showOnnx = prefs.getBoolean("pref_show_onnx", true)
+    val showCloud = prefs.getBoolean("pref_show_cloud", true)
+
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        translations.mlKit?.let {
-            TranslationCard("Google ML Kit", it, "☁️", if (dark) Color(0xFF60A5FA) else Color(0xFF1D4ED8))
+        if (showMl) {
+            TranslationCard("Google ML Kit", translations.mlKit, "☁️", if (dark) Color(0xFF60A5FA) else Color(0xFF1D4ED8))
         }
-        translations.onnx?.let {
-            TranslationCard("OPUS-MT (Офлайн)", it, "🤖", if (dark) Color(0xFF34D399) else Color(0xFF047857))
+        if (showOnnx) {
+            TranslationCard("OPUS-MT (Офлайн)", translations.onnx, "🤖", if (dark) Color(0xFF34D399) else Color(0xFF047857))
         }
-        translations.cloud?.let {
-            TranslationCard("Cloud API", it, "⚡", if (dark) Color(0xFFFBBF24) else Color(0xFFB45309))
+        if (showCloud) {
+            TranslationCard("Cloud API", translations.cloud, "⚡", if (dark) Color(0xFFFBBF24) else Color(0xFFB45309))
         }
     }
 }
