@@ -7,7 +7,7 @@ import com.example.linter.di.AppModule
 import com.example.linter.domain.model.LearningStatus
 import com.example.linter.domain.model.UiWordStatus
 import com.example.linter.domain.model.WordMeta
-import com.example.linter.domain.model.MultiTranslation // НОВОЕ
+import com.example.linter.domain.model.MultiTranslation
 import com.example.linter.domain.repository.ReviewItem
 import com.example.linter.presentation.ui.lecturedetail.PopupState
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,15 +26,11 @@ data class ReviewUiState(
     val showAnswer: Boolean = false,
     val isFinished: Boolean = false,
     val popupState: PopupState = PopupState.Hidden,
-
-    // Поддержка выделения фраз
     val selectionRange: IntRange? = null,
-
-    // СЧЁТЧИКИ
     val blueCount: Int = 0,
     val redCount: Int = 0,
     val greenCount: Int = 0,
-    val currentBucket: CardBucket? = null // Для подчеркивания текущей категории
+    val currentBucket: CardBucket? = null
 )
 
 class ReviewViewModel : ViewModel() {
@@ -45,7 +41,6 @@ class ReviewViewModel : ViewModel() {
     val uiState: StateFlow<ReviewUiState> = _uiState.asStateFlow()
 
     private var dragStartTokenIndex: Int = -1
-
     private var translationJob: kotlinx.coroutines.Job? = null
 
     init {
@@ -112,7 +107,6 @@ class ReviewViewModel : ViewModel() {
 
             val newQueue = state.queue.drop(1).toMutableList()
 
-            // Пулл-форвард: если карточка снова будет повторяться сегодня (интервал < 1)
             if (grade.interval < 1) {
                 val updatedFsrs = currentItem.fsrsCard.copy(
                     reviewCount = currentItem.fsrsCard.reviewCount + 1,
@@ -138,8 +132,6 @@ class ReviewViewModel : ViewModel() {
             }
         }
     }
-
-    // --- ЛОГИКА ЖИВОГО ТЕКСТА И ВЫДЕЛЕНИЯ ---
 
     fun onWordClicked(offset: Int) {
         val state = _uiState.value
@@ -204,7 +196,6 @@ class ReviewViewModel : ViewModel() {
             }
 
             if (meta.status == UiWordStatus.BLUE || meta.status == UiWordStatus.TRANSPARENT) {
-                // Асинхронно собираем поток переводов и обновляем карточку в реальном времени
                 vocabularyRepository.fetchMultiTranslations(word, "en")
                     .collect { progressiveTrans ->
                         _uiState.value = state.copy(
@@ -217,12 +208,6 @@ class ReviewViewModel : ViewModel() {
         }
     }
 
-    fun dismissPopup() {
-        translationJob?.cancel() // Отменяем сбор при закрытии
-        _uiState.value = _uiState.value.copy(popupState = PopupState.Hidden, selectionRange = null)
-    }
-
-    // ИЗМЕНЕНИЕ: Принимаем MultiTranslation
     fun onStartLearning(word: String, translations: MultiTranslation, contextSentence: String) {
         viewModelScope.launch {
             vocabularyRepository.createLearningCard(word, 0L, 0L, contextSentence, translations, LearningStatus.NEW)
@@ -256,24 +241,39 @@ class ReviewViewModel : ViewModel() {
         }
     }
 
-    private suspend fun refreshCurrentCard() {
-        val state = _uiState.value
-        val currentItem = state.currentItem ?: return
-
-        val updatedMeta = vocabularyRepository.getWordMetas(currentItem.wordMeta.keys.toList())
-        val updatedItem = currentItem.copy(wordMeta = updatedMeta)
-
-        val newQueue = state.queue.toMutableList()
-        if (newQueue.isNotEmpty()) newQueue[0] = updatedItem
-
-        _uiState.value = state.copy(queue = newQueue, currentItem = updatedItem)
-    }
-
-
+    // Сохранение отредактированного перевода в сессии повторения
     fun onSaveCustomTranslation(cardId: Long, word: String, customTranslation: String) {
         viewModelScope.launch {
             vocabularyRepository.updateCustomTranslation(cardId, customTranslation)
             refreshCurrentCard()
         }
+    }
+
+    private suspend fun refreshCurrentCard() {
+        val state = _uiState.value
+        val currentItem = state.currentItem ?: return
+
+        // Подгружаем мета-данные из репозитория
+        val updatedMeta = vocabularyRepository.getWordMetas(currentItem.wordMeta.keys.toList())
+
+        // Извлекаем обновленный кастомный перевод и записываем его напрямую в текущий ReviewItem
+        val updatedTranslations = updatedMeta[currentItem.word.lowercase()]?.translations ?: currentItem.translations
+
+        val updatedItem = currentItem.copy(
+            wordMeta = updatedMeta,
+            translations = updatedTranslations // Обновление translations внутри UI-стейта
+        )
+
+        val newQueue = state.queue.toMutableList()
+        if (newQueue.isNotEmpty()) {
+            newQueue[0] = updatedItem
+        }
+
+        _uiState.value = state.copy(queue = newQueue, currentItem = updatedItem)
+    }
+
+    fun dismissPopup() {
+        translationJob?.cancel()
+        _uiState.value = _uiState.value.copy(popupState = PopupState.Hidden, selectionRange = null)
     }
 }

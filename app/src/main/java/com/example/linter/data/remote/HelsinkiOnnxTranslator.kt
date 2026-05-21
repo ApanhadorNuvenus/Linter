@@ -10,6 +10,8 @@ import com.sentencepiece.Scoring
 import com.sentencepiece.SentencePieceAlgorithm
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex       // Добавлен импорт Mutex
+import kotlinx.coroutines.sync.withLock    // Добавлен импорт withLock
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -19,9 +21,9 @@ import java.nio.file.Paths
 class HelsinkiOnnxTranslator(private val context: Context) : TextTranslator {
     private val env = OrtEnvironment.getEnvironment()
 
-    private var currentLang: String? = null
-    private var encoderSession: OrtSession? = null
-    private var decoderSession: OrtSession? = null
+    @Volatile private var currentLang: String? = null
+    @Volatile private var encoderSession: OrtSession? = null
+    @Volatile private var decoderSession: OrtSession? = null
     private var sourceModel: Model? = null
 
     private val spAlgorithm = SentencePieceAlgorithm(false, Scoring.HIGHEST_SCORE)
@@ -33,6 +35,9 @@ class HelsinkiOnnxTranslator(private val context: Context) : TextTranslator {
     private var unkTokenId: Long = 2L
 
     companion object {
+        // Корутинный неблокирующий мьютекс для синхронизации загрузки моделей
+        private val modelLoadingMutex = Mutex()
+
         @Volatile
         private var cachedField: java.lang.reflect.Field? = null
         @Volatile
@@ -53,39 +58,44 @@ class HelsinkiOnnxTranslator(private val context: Context) : TextTranslator {
         return file.absolutePath
     }
 
-    @Synchronized
-    private fun loadModelsForLang(lang: String) {
-        if (currentLang == lang) return
+    // ИСПРАВЛЕНИЕ: Метод теперь suspend и использует неблокирующий Mutex вместо @Synchronized
+    private suspend fun loadModelsForLang(lang: String) {
+        if (currentLang == lang && encoderSession != null && decoderSession != null) return
 
-        encoderSession?.close()
-        decoderSession?.close()
-        pieceToId.clear()
-        idToPiece.clear()
+        modelLoadingMutex.withLock {
+            // Двойная проверка (Double-Checked Locking) внутри лока
+            if (currentLang == lang && encoderSession != null && decoderSession != null) return
 
-        val opts = OrtSession.SessionOptions().apply { addConfigEntry("session.load_model_format", "ONNX") }
+            encoderSession?.close()
+            decoderSession?.close()
+            pieceToId.clear()
+            idToPiece.clear()
 
-        val encoderBytes = context.assets.open("onnx/$lang/encoder_model_quantized.onnx").readBytes()
-        encoderSession = env.createSession(encoderBytes, opts)
+            val opts = OrtSession.SessionOptions().apply { addConfigEntry("session.load_model_format", "ONNX") }
 
-        val decoderBytes = context.assets.open("onnx/$lang/decoder_model_quantized.onnx").readBytes()
-        decoderSession = env.createSession(decoderBytes, opts)
+            val encoderBytes = context.assets.open("onnx/$lang/encoder_model_quantized.onnx").readBytes()
+            encoderSession = env.createSession(encoderBytes, opts)
 
-        val sourceSpmPath = getAssetFilePath(lang, "source.spm")
-        sourceModel = Model.parseFrom(Paths.get(sourceSpmPath))
+            val decoderBytes = context.assets.open("onnx/$lang/decoder_model_quantized.onnx").readBytes()
+            decoderSession = env.createSession(decoderBytes, opts)
 
-        val vocabBytes = context.assets.open("onnx/$lang/vocab.json").readBytes()
-        val vocabJson = JSONObject(String(vocabBytes))
-        vocabJson.keys().forEach { key ->
-            val id = vocabJson.getLong(key)
-            pieceToId[key] = id
-            idToPiece[id] = key
+            val sourceSpmPath = getAssetFilePath(lang, "source.spm")
+            sourceModel = Model.parseFrom(Paths.get(sourceSpmPath))
+
+            val vocabBytes = context.assets.open("onnx/$lang/vocab.json").readBytes()
+            val vocabJson = JSONObject(String(vocabBytes))
+            vocabJson.keys().forEach { key ->
+                val id = vocabJson.getLong(key)
+                pieceToId[key] = id
+                idToPiece[id] = key
+            }
+
+            padTokenId = pieceToId["<pad>"] ?: 59513L
+            eosTokenId = pieceToId["</s>"] ?: 0L
+            unkTokenId = pieceToId["<unk>"] ?: 2L
+
+            currentLang = lang
         }
-
-        padTokenId = pieceToId["<pad>"] ?: 59513L
-        eosTokenId = pieceToId["</s>"] ?: 0L
-        unkTokenId = pieceToId["<unk>"] ?: 2L
-
-        currentLang = lang
     }
 
     private fun getPieceStrFromModel(model: Model, spId: Int): String {
@@ -106,7 +116,7 @@ class HelsinkiOnnxTranslator(private val context: Context) : TextTranslator {
                                     break
                                 }
                             } catch (e: Exception) {
-                                // Игнорируем ошибки доступа к отдельным полям и продолжаем поиск
+                                // Игнорируем ошибки
                             }
                         }
                         if (cachedField == null) {
@@ -132,16 +142,19 @@ class HelsinkiOnnxTranslator(private val context: Context) : TextTranslator {
                 return method.invoke(model, spId) as String
             }
         } catch (e: Exception) {
-            // Безопасный перехват непредвиденных исключений вызова
+            // Безопасный перехват
         }
         return "<unk>"
     }
 
+    override fun isModelLoaded(lang: String): Boolean {
+        return currentLang == lang && encoderSession != null && decoderSession != null
+    }
+
     override suspend fun translate(text: String, sourceLang: String, targetLang: String): Result<String> = withContext(Dispatchers.Default) {
         try {
-            withContext(Dispatchers.IO) {
-                loadModelsForLang(sourceLang)
-            }
+            // Безопасный вызов suspend-загрузки моделей
+            loadModelsForLang(sourceLang)
 
             val cleanText = text.replace("\n", " ").trim()
             if (cleanText.isEmpty()) return@withContext Result.success("")
@@ -206,17 +219,5 @@ class HelsinkiOnnxTranslator(private val context: Context) : TextTranslator {
         } catch (e: Exception) {
             Result.success("❌ Офлайн-модель для '$sourceLang' не установлена")
         }
-    }
-
-    override suspend fun warmUp(lang: String) = withContext(Dispatchers.IO) {
-        try {
-            loadModelsForLang(lang)
-        } catch (e: Exception) {
-            // Игнорируем ошибки при фоновом прогреве
-        }
-    }
-
-    override fun isModelLoaded(lang: String): Boolean {
-        return currentLang == lang && encoderSession != null && decoderSession != null
     }
 }

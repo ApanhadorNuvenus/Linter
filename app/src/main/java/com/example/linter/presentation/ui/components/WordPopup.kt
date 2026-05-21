@@ -7,7 +7,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState // Добавлен импорт
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll       // Добавлен импорт
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
@@ -18,8 +20,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -27,6 +32,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.example.linter.domain.model.LearningStatus
 import com.example.linter.domain.model.MultiTranslation
 import com.example.linter.presentation.ui.lecturedetail.PopupState
+import com.example.linter.presentation.ui.review.getTrimmedContext
 
 @Composable
 fun TranslationCard(title: String, text: String?, icon: String, accentColor: Color) {
@@ -65,7 +71,6 @@ fun TranslationCard(title: String, text: String?, icon: String, accentColor: Col
                 Spacer(modifier = Modifier.height(4.dp))
 
                 if (text == null) {
-                    // Красивый скелетон-индикатор загрузки конкретного источника перевода
                     LinearProgressIndicator(
                         modifier = Modifier
                             .fillMaxWidth(0.5f)
@@ -116,19 +121,67 @@ fun WordPopup(
     onMarkAsIgnored: (word: String) -> Unit,
     onChangeLearningStatus: (cardId: Long, word: String, status: LearningStatus) -> Unit,
     onDismiss: () -> Unit,
-    // Добавлен новый коллбек с дефолтным пустым значением:
     onSaveCustomTranslation: (cardId: Long, word: String, translation: String) -> Unit = { _, _, _ -> }
 ) {
     if (state is PopupState.Hidden) return
 
-    // Локальные состояния редактирования своего перевода
     var isEditingCustom by remember { mutableStateOf(false) }
     var customInput by remember { mutableStateOf("") }
 
-    // Сбрасываем режим редактирования при изменении состояния попапа
     LaunchedEffect(state) {
         isEditingCustom = false
         customInput = ""
+    }
+
+    val trimmedContextResult = remember(state) {
+        val sentence = when (state) {
+            is PopupState.NewWord -> state.contextSentence
+            is PopupState.LearningWord -> state.contextSentence
+            else -> ""
+        }
+        val target = when (state) {
+            is PopupState.NewWord -> state.wordOrPhrase
+            is PopupState.LearningWord -> state.wordOrPhrase
+            else -> ""
+        }
+        getTrimmedContext(sentence, target, maxWordsAround = 4)
+    }
+
+    val shouldShowContext = remember(state) {
+        val target = when (state) {
+            is PopupState.NewWord -> state.wordOrPhrase
+            is PopupState.LearningWord -> state.wordOrPhrase
+            else -> ""
+        }.trim()
+
+        val sentence = when (state) {
+            is PopupState.NewWord -> state.contextSentence
+            is PopupState.LearningWord -> state.contextSentence
+            else -> ""
+        }.trim()
+
+        if (target.isBlank() || sentence.isBlank()) {
+            false
+        } else {
+            val wordCount = target.split(Regex("\\s+")).filter { it.isNotEmpty() }.size
+            val isShortPhrase = wordCount < 4
+            val isBelowCoverageThreshold = (target.length.toFloat() / sentence.length.toFloat()) < 0.7f
+
+            isShortPhrase && isBelowCoverageThreshold
+        }
+    }
+
+    // ИСПРАВЛЕНИЕ: Автоматически уменьшаем шрифт заголовка, если выделена длинная фраза
+    val title = when (state) {
+        is PopupState.NewWord -> state.wordOrPhrase
+        is PopupState.LearningWord -> state.wordOrPhrase
+        else -> ""
+    }
+    val titleWordCount = remember(title) { title.split(Regex("\\s+")).filter { it.isNotEmpty() }.size }
+    val titleStyle = if (titleWordCount > 4) {
+        MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, lineHeight = 26.sp)
+    } else {
+        MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold)
     }
 
     Dialog(
@@ -144,31 +197,24 @@ fun WordPopup(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
         ) {
+            // ИСПРАВЛЕНИЕ: Добавлен вертикальный скролл (.verticalScroll), чтобы контент никогда не обрезался
             Column(
                 modifier = Modifier
                     .padding(24.dp)
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
             ) {
-                // Заголовок слова
-                val title = when (state) {
-                    is PopupState.NewWord -> state.wordOrPhrase
-                    is PopupState.LearningWord -> state.wordOrPhrase
-                    else -> ""
-                }
-
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
+                    style = titleStyle,
                     color = MaterialTheme.colorScheme.onSurface
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Контекст / Переводы
+                // Контент
                 when (state) {
                     is PopupState.NewWord -> {
-                        // Поле ввода своего перевода для новой карточки
                         if (isEditingCustom) {
                             OutlinedTextField(
                                 value = customInput,
@@ -210,33 +256,48 @@ fun WordPopup(
                         MultiTranslationView(state.translations)
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // Контекстное предложение в виде цитаты
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
-                                .padding(12.dp)
-                        ) {
-                            Box(
+                        if (shouldShowContext) {
+                            Row(
                                 modifier = Modifier
-                                    .width(3.dp)
-                                    .height(36.dp)
-                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = "\"${state.contextSentence}\"",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontStyle = FontStyle.Italic,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+                                    .padding(12.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .width(3.dp)
+                                        .height(36.dp)
+                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+
+                                val annotatedContext = buildAnnotatedString {
+                                    append(trimmedContextResult.text)
+                                    trimmedContextResult.targetRange?.let { range ->
+                                        addStyle(
+                                            SpanStyle(
+                                                fontWeight = FontWeight.Bold,
+                                                textDecoration = TextDecoration.Underline,
+                                                color = MaterialTheme.colorScheme.primary
+                                            ),
+                                            range.first,
+                                            range.last + 1
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = annotatedContext,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontStyle = FontStyle.Italic,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                     is PopupState.LearningWord -> {
                         val savedCustom = state.meta.translations?.custom
 
-                        // Редактор своего перевода для уже сохраненной карточки
                         if (isEditingCustom) {
                             OutlinedTextField(
                                 value = customInput,
@@ -308,7 +369,6 @@ fun WordPopup(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // Дизайнерский Сегментированный переключатель уровня
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -340,7 +400,7 @@ fun WordPopup(
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text(
-                                        text = status.name.take(4), // NEW, RECO, FAMI, LEAR
+                                        text = status.name.take(4),
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = textColor
@@ -354,7 +414,6 @@ fun WordPopup(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // Действия
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,

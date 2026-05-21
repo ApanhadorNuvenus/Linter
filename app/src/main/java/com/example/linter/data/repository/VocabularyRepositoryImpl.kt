@@ -108,13 +108,12 @@ class VocabularyRepositoryImpl(
         val showOnnx = prefs.getBoolean("pref_show_onnx", true)
         val showCloud = prefs.getBoolean("pref_show_cloud", true)
 
-        // Проверяем, прогрета ли локальная модель для текущего языка
         val isOnnxLoaded = if (showOnnx) AppModule.onnxTranslator.isModelLoaded(sourceLang) else true
 
         var currentTranslations = MultiTranslation()
 
         if (!isOnnxLoaded) {
-            // СЦЕНАРИЙ 1. ХОЛОДНЫЙ ЗАПУСК: мгновенно отправляем пустой стейт для отрисовки скелетонов
+            // СЦЕНАРИЙ 1. ХОЛОДНЫЙ СТАРТ: Сразу пускаем пустую структуру со скелетонами
             send(currentTranslations)
 
             if (showMl) {
@@ -139,12 +138,11 @@ class VocabularyRepositoryImpl(
                 }
             }
         } else {
-            // СЦЕНАРИЙ 2. ГОРЯЧИЙ ЗАПУСК: ждем быстрые локальные модели вместе, исключая мерцание скелетонов
+            // СЦЕНАРИЙ 2. ГОРЯЧИЙ СТАРТ: Google ML Kit транслируется за 30 мс, а ONNX плавно догружается
             coroutineScope {
                 val mlDeferred = if (showMl) async { translator.translate(wordOrPhrase, sourceLang, "ru").getOrNull() } else null
                 val onnxDeferred = if (showOnnx) async { AppModule.onnxTranslator.translate(wordOrPhrase, sourceLang, "ru").getOrNull() } else null
 
-                // Облако (медленное из-за сети) запускаем в фоне, чтобы оно не блокировало открытие окна
                 if (showCloud) {
                     launch {
                         val res = AppModule.cloudTranslator.translate(wordOrPhrase, sourceLang, "ru").getOrNull()
@@ -153,15 +151,18 @@ class VocabularyRepositoryImpl(
                     }
                 }
 
-                // Синхронно ожидаем быстрые локальные результаты
+                // Ждем супер-быстрый Google ML Kit и СРАЗУ открываем окно (попап) без задержки
                 val mlResult = mlDeferred?.await()
-                val onnxResult = onnxDeferred?.await()
+                if (showMl && mlResult != null) {
+                    currentTranslations = currentTranslations.copy(mlKit = mlResult)
+                    send(currentTranslations)
+                }
 
+                // ONNX догрузится в фоне следом и плавно обновит свою строчку в попапе
+                val onnxResult = onnxDeferred?.await()
                 currentTranslations = currentTranslations.copy(
-                    mlKit = if (showMl) (mlResult ?: "Ошибка перевода") else null,
                     onnx = if (showOnnx) (onnxResult ?: "Ошибка перевода") else null
                 )
-                // Отправляем готовую структуру один раз — окно откроется мгновенно с заполненным текстом
                 send(currentTranslations)
             }
         }
