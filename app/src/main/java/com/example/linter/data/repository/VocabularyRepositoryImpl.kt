@@ -174,11 +174,34 @@ class VocabularyRepositoryImpl(
             ?: VocabularyItemEntity(text = normalized).also { vocabBox.put(it) }
     }
 
-    override suspend fun markAsKnown(word: String) {
+    override suspend fun markAsKnown(
+        word: String,
+        translations: MultiTranslation?,
+        contextSentence: String,
+        lectureId: Long,
+        youtubeVideoId: Long
+    ) {
         withContext(Dispatchers.IO) {
             val item = getOrCreateVocabItem(word)
             item.isKnown = true
             vocabBox.put(item)
+
+            // Если предоставлен перевод (слово помечается как известное с самого начала),
+            // сохраняем ContextCardEntity с переводами, но НЕ создаем FlashCardEntity!
+            if (translations != null) {
+                val card = ContextCardEntity(
+                    vocabularyItemId = item.id,
+                    lectureId = lectureId,
+                    youtubeVideoId = youtubeVideoId,
+                    contextSentence = contextSentence,
+                    translation = translations.mlKit ?: "",
+                    translationOnnx = translations.onnx,
+                    translationCloud = translations.cloud,
+                    translationCustom = translations.custom,
+                    status = LearningStatus.NEW.level
+                )
+                cardBox.put(card)
+            }
         }
     }
 

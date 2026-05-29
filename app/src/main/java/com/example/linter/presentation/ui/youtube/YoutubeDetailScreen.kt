@@ -5,14 +5,14 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
@@ -22,10 +22,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -68,37 +70,14 @@ fun YoutubeDetailScreen(
     var showSettings by remember { mutableStateOf(false) }
     var speedMenuExpanded by remember { mutableStateOf(false) }
     var qualityMenuExpanded by remember { mutableStateOf(false) }
+
     var wasPlayingWhenClicked by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
 
-    // Флаг, чтобы отследить самый первый прыжок к сохраненной позиции
-    var isInitialScrollDone by remember { mutableStateOf(false) }
-
-    // Контролируем прокрутку напрямую через корутину LaunchedEffect (без утечек)
     LaunchedEffect(state.currentBlockIndex) {
-        val targetIndex = state.currentBlockIndex
-        if (targetIndex >= 0 && state.subtitles.isNotEmpty()) {
-
-            // Смещение в пикселях, чтобы активный субтитр был чуть ниже верхней границы (комфортно для глаз)
-            val scrollOffset = -120
-
-            if (!isInitialScrollDone) {
-                // 1. ПЕРВЫЙ ЗАПУСК: Мгновенно позиционируем без анимации, исключая визуальный лаг
-                listState.scrollToItem(targetIndex, scrollOffset)
-                isInitialScrollDone = true
-            } else {
-                val firstVisible = listState.firstVisibleItemIndex
-                val distance = kotlin.math.abs(targetIndex - firstVisible)
-
-                if (distance > 3) {
-                    // 2. ДЛИННЫЙ СКАЧОК (Seek/Перемотка): Мгновенно перемещаем, чтобы не грузить UI рендером
-                    listState.scrollToItem(targetIndex, scrollOffset)
-                } else {
-                    // 3. ЕСТЕСТВЕННЫЙ ХОД (1-3 шага): Плавно передвигаем строку
-                    listState.animateScrollToItem(targetIndex, scrollOffset)
-                }
-            }
+        if (state.currentBlockIndex >= 0 && !listState.isScrollInProgress) {
+            coroutineScope.launch { listState.animateScrollToItem(state.currentBlockIndex) }
         }
     }
 
@@ -114,50 +93,39 @@ fun YoutubeDetailScreen(
         topBar = {
             TopAppBar(
                 title = { Text(state.title, maxLines = 1, fontWeight = FontWeight.SemiBold) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
+                navigationIcon = { TextButton(onClick = onBack) { Text("Назад") } },
                 actions = {
                     IconButton(
                         onClick = {
                             if (state.originalUrl.isNotBlank()) {
                                 clipboardManager.setText(AnnotatedString(state.originalUrl))
-                                coroutineScope.launch { snackbarHostState.showSnackbar("URL copied to clipboard") }
+                                coroutineScope.launch {
+                                    snackbarHostState.showSnackbar("Ссылка скопирована")
+                                }
                             }
                         }
                     ) {
-                        Icon(Icons.Default.Share, contentDescription = "Copy link")
+                        Icon(Icons.Default.Share, contentDescription = "Копировать ссылку")
                     }
+
                     IconButton(onClick = { showSettings = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
+                        Icon(Icons.Default.Settings, contentDescription = "Настройки")
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
+                }
             )
-        },
-        containerColor = MaterialTheme.colorScheme.background
+        }
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
             if (state.isLoading) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(strokeWidth = 3.dp)
+                    CircularProgressIndicator()
                 }
             } else if (state.error != null) {
                 Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
-                    Text(text = "Error: ${state.error}", color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+                    Text("Ошибка: ${state.error}", color = MaterialTheme.colorScheme.error)
                 }
             } else {
-                // Video & Control Dock with Frosted Pills
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .aspectRatio(16f / 9f)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Color.Black)
-                ) {
+                Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black)) {
                     AndroidView(
                         factory = { ctx ->
                             PlayerView(ctx).apply {
@@ -168,26 +136,21 @@ fun YoutubeDetailScreen(
                         modifier = Modifier.fillMaxSize()
                     )
 
-                    // Frosted Pill Container (Speed, Resolution)
                     Row(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(12.dp)
+                            .padding(8.dp)
                     ) {
-                        // Quality Selector Pill
                         Box {
                             Surface(
-                                color = Color.Black.copy(alpha = 0.5f),
-                                shape = RoundedCornerShape(20.dp),
-                                modifier = Modifier
-                                    .clickable { qualityMenuExpanded = true }
-                                    .border(0.5.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(20.dp))
+                                color = Color.Black.copy(alpha = 0.6f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.clickable { qualityMenuExpanded = true }
                             ) {
                                 Text(
                                     text = state.currentQuality,
                                     color = Color.White,
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -209,20 +172,16 @@ fun YoutubeDetailScreen(
 
                         Spacer(modifier = Modifier.width(8.dp))
 
-                        // Playback Speed Pill
                         Box {
                             Surface(
-                                color = Color.Black.copy(alpha = 0.5f),
-                                shape = RoundedCornerShape(20.dp),
-                                modifier = Modifier
-                                    .clickable { speedMenuExpanded = true }
-                                    .border(0.5.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(20.dp))
+                                color = Color.Black.copy(alpha = 0.6f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.clickable { speedMenuExpanded = true }
                             ) {
                                 Text(
                                     text = "${state.playbackSpeed}x",
                                     color = Color.White,
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -245,14 +204,10 @@ fun YoutubeDetailScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Beautifully Partitioned Subtitles List
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxWidth().weight(1f),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 16.dp)
                 ) {
                     itemsIndexed(
                         items = state.subtitles,
@@ -268,10 +223,10 @@ fun YoutubeDetailScreen(
                                 exoPlayer.seekTo(block.startTimeMs)
                                 exoPlayer.play()
                             },
-                            onWordSelected = { word ->
+                            onWordSelected = { phrase ->
                                 wasPlayingWhenClicked = exoPlayer.isPlaying
                                 exoPlayer.pause()
-                                viewModel.onWordClicked(word, block.sourceText)
+                                viewModel.onWordClicked(phrase, block.sourceText)
                             }
                         )
                     }
@@ -287,59 +242,45 @@ fun YoutubeDetailScreen(
                 onMarkAsIgnored = { word -> viewModel.onMarkAsIgnored(word) },
                 onChangeLearningStatus = { cardId, word, lStatus -> viewModel.onChangeLearningStatus(cardId, word, lStatus) },
                 onDismiss = { viewModel.dismissPopup() },
-                onSaveCustomTranslation = { cardId, word, translation -> viewModel.onSaveCustomTranslation(cardId, word, translation) }
+                onSaveCustomTranslation = { cardId, word, translation ->
+                    viewModel.onSaveCustomTranslation(cardId, word, translation)
+                }
             )
         }
 
-        // Settings BottomSheet Redesign (Clean M3 Sheet)
         if (showSettings) {
-            ModalBottomSheet(
-                onDismissRequest = { showSettings = false },
-                dragHandle = { BottomSheetDefaults.DragHandle() },
-                containerColor = MaterialTheme.colorScheme.surface
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp)
-                        .padding(bottom = 40.dp)
-                ) {
-                    Text(
-                        "Translation Engines",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
+            ModalBottomSheet(onDismissRequest = { showSettings = false }) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Режим перевода", style = MaterialTheme.typography.titleLarge)
                     Spacer(modifier = Modifier.height(16.dp))
 
                     TranslationMode.entries.forEach { mode ->
-                        val isEnabled = mode != TranslationMode.YOUTUBE_NATIVE || state.hasYoutubeTranslation
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable(enabled = isEnabled) { viewModel.setTranslationMode(mode) }
-                                .padding(vertical = 12.dp, horizontal = 8.dp)
+                                .clickable(enabled = mode != TranslationMode.YOUTUBE_NATIVE || state.hasYoutubeTranslation) {
+                                    viewModel.setTranslationMode(mode)
+                                }
+                                .padding(vertical = 4.dp)
                         ) {
                             RadioButton(
                                 selected = state.translationMode == mode,
                                 onClick = { viewModel.setTranslationMode(mode) },
-                                enabled = isEnabled
+                                enabled = mode != TranslationMode.YOUTUBE_NATIVE || state.hasYoutubeTranslation
                             )
-                            Spacer(modifier = Modifier.width(12.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = mode.title,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = if (isEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.secondary
+                                color = if (mode == TranslationMode.YOUTUBE_NATIVE && !state.hasYoutubeTranslation) Color.Gray else Color.Unspecified
                             )
                         }
                     }
 
                     Spacer(modifier = Modifier.height(24.dp))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
-                    Spacer(modifier = Modifier.height(24.dp))
+                    HorizontalDivider()
+                    Spacer(modifier = Modifier.height(16.dp))
 
-                    // Dangerous cache cleaning action styled elegantly
                     Button(
                         onClick = {
                             showSettings = false
@@ -349,13 +290,14 @@ fun YoutubeDetailScreen(
                             containerColor = MaterialTheme.colorScheme.errorContainer,
                             contentColor = MaterialTheme.colorScheme.onErrorContainer
                         ),
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Default.Warning, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.Warning, contentDescription = "Очистить кэш")
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Reset Subtitle Cache & Refresh")
+                        Text("Очистить кэш и загрузить заново")
                     }
+
+                    Spacer(modifier = Modifier.height(32.dp))
                 }
             }
         }
@@ -370,9 +312,8 @@ fun SubtitleRowCard(
     onClick: () -> Unit,
     onWordSelected: (String) -> Unit
 ) {
-    val darkTheme = isSystemInDarkTheme()
+    val darkTheme = androidx.compose.foundation.isSystemInDarkTheme()
 
-    // Smooth transition animations for state switching
     val cardBackground by animateColorAsState(
         targetValue = if (isActive) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
         label = "BgAnim"
@@ -381,6 +322,11 @@ fun SubtitleRowCard(
         targetValue = if (isActive) 2.dp else 0.dp,
         label = "ElevAnim"
     )
+
+    // Состояния жеста выделения внутри конкретной карточки субтитров
+    var localSelectionRange by remember { mutableStateOf<IntRange?>(null) }
+    var dragStartTokenIndex by remember { mutableStateOf(-1) }
+    var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
 
     Card(
         modifier = Modifier
@@ -395,13 +341,12 @@ fun SubtitleRowCard(
                 .fillMaxWidth()
                 .padding(vertical = 12.dp, horizontal = 16.dp)
         ) {
-            // Elegant left border indicator for active states instead of harsh overall background
             Box(
                 modifier = Modifier
                     .width(4.dp)
                     .height(48.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(if (isActive) MaterialTheme.colorScheme.tertiary else Color.Transparent)
+                    .background(if (isActive) MaterialTheme.colorScheme.primary else Color.Transparent)
             )
 
             Spacer(modifier = Modifier.width(12.dp))
@@ -424,43 +369,98 @@ fun SubtitleRowCard(
                         if (bgColor != Color.Transparent) {
                             addStyle(SpanStyle(background = bgColor), startIndex, endIndex)
                         }
+                    }
 
-                        if (token.isWord) {
-                            addStringAnnotation("WORD", token.value, startIndex, endIndex)
+                    // Окрашивание свайп-выделения словосочетаний
+                    localSelectionRange?.let { range ->
+                        val intersectStart = maxOf(range.first, 0)
+                        val intersectEnd = minOf(range.last + 1, block.sourceText.length)
+                        if (intersectStart < intersectEnd) {
+                            addStyle(SpanStyle(background = Color.Gray.copy(alpha = 0.4f)), intersectStart, intersectEnd)
                         }
                     }
                 }
 
-                androidx.compose.foundation.text.ClickableText(
+                // Интерактивный жест-выделяемый текст
+                Text(
                     text = annotatedText,
                     style = MaterialTheme.typography.bodyLarge.copy(
                         fontSize = 18.sp,
                         fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
-                        lineHeight = 24.sp
+                        lineHeight = 24.sp,
+                        textAlign = TextAlign.Center
                     ),
-                    onClick = { offset ->
-                        annotatedText.getStringAnnotations("WORD", offset, offset)
-                            .firstOrNull()?.let { annotation ->
-                                onWordSelected(annotation.item)
-                            }
-                    }
+                    onTextLayout = { textLayoutResult = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pointerInput(block.sourceText) {
+                            detectTapGestures(
+                                onTap = { pos ->
+                                    val offset = textLayoutResult?.getOffsetForPosition(pos) ?: return@detectTapGestures
+                                    val token = tokens.find { it.startIndex <= offset && it.endIndex > offset && it.isWord }
+                                    if (token != null) {
+                                        onWordSelected(token.value)
+                                    }
+                                }
+                            )
+                        }
+                        .pointerInput(block.sourceText) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { pos ->
+                                    val offset = textLayoutResult?.getOffsetForPosition(pos) ?: return@detectDragGesturesAfterLongPress
+                                    val token = tokens.find { it.startIndex <= offset && it.endIndex > offset } ?: return@detectDragGesturesAfterLongPress
+                                    dragStartTokenIndex = tokens.indexOf(token)
+                                    localSelectionRange = token.startIndex until token.endIndex
+                                },
+                                onDrag = { change, _ ->
+                                    val offset = textLayoutResult?.getOffsetForPosition(change.position) ?: return@detectDragGesturesAfterLongPress
+                                    val currentToken = tokens.find { it.startIndex <= offset && it.endIndex > offset } ?: return@detectDragGesturesAfterLongPress
+                                    val currentIndex = tokens.indexOf(currentToken)
+                                    if (dragStartTokenIndex != -1 && currentIndex != -1) {
+                                        val startToken = tokens[minOf(dragStartTokenIndex, currentIndex)]
+                                        val endToken = tokens[maxOf(dragStartTokenIndex, currentIndex)]
+                                        localSelectionRange = startToken.startIndex until endToken.endIndex
+                                    }
+                                },
+                                onDragEnd = {
+                                    localSelectionRange?.let { range ->
+                                        val phrase = block.sourceText.substring(range).trim()
+                                        if (phrase.isNotBlank()) {
+                                            onWordSelected(phrase)
+                                        }
+                                    }
+                                    localSelectionRange = null
+                                    dragStartTokenIndex = -1
+                                },
+                                onDragCancel = {
+                                    localSelectionRange = null
+                                    dragStartTokenIndex = -1
+                                }
+                            )
+                        }
                 )
 
                 Spacer(modifier = Modifier.height(4.dp))
 
-                val displayedTranslation = when (state.translationMode) {
-                    TranslationMode.YOUTUBE_NATIVE -> block.translatedText ?: ""
-                    TranslationMode.LOCAL_ML_KIT -> block.mlKitTranslatedText ?: ""
-                    TranslationMode.ADVANCED_ONNX -> block.onnxTranslatedText ?: ""
-                }
+                // Отображение перевода субтитра (Скрываем полностью, если выбран режим DISABLED)
+                if (state.translationMode != TranslationMode.DISABLED) {
+                    val displayedTranslation = when (state.translationMode) {
+                        TranslationMode.YOUTUBE_NATIVE -> block.translatedText ?: ""
+                        TranslationMode.LOCAL_ML_KIT -> block.mlKitTranslatedText ?: ""
+                        TranslationMode.ADVANCED_ONNX -> block.onnxTranslatedText ?: ""
+                        else -> ""
+                    }
 
-                if (displayedTranslation.isNotBlank()) {
-                    Text(
-                        text = displayedTranslation,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.secondary,
-                        lineHeight = 20.sp
-                    )
+                    if (displayedTranslation.isNotBlank()) {
+                        Text(
+                            text = displayedTranslation,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.secondary,
+                            lineHeight = 20.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
         }

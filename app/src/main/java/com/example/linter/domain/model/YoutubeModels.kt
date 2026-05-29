@@ -22,7 +22,8 @@ data class SubtitleBlock(
 enum class TranslationMode(val title: String) {
     YOUTUBE_NATIVE("Перевод YouTube (Лучшее качество)"),
     LOCAL_ML_KIT("Быстрый локальный (Google ML Kit)"),
-    ADVANCED_ONNX("Нейросеть OPUS-MT (ONNX Офлайн)")
+    ADVANCED_ONNX("Нейросеть OPUS-MT (ONNX Офлайн)"),
+    DISABLED("Отключить перевод (Только оригинал)") // Новая опция отключения
 }
 
 data class VideoPlaybackInfo(
@@ -31,5 +32,5 @@ data class VideoPlaybackInfo(
     val subtitles: List<SubtitleBlock>,
     val hasYoutubeTranslation: Boolean,
     val sourceLang: String,
-    val availableQualities: List<String> // НОВОЕ: Список доступных разрешений
+    val availableQualities: List<String>
 )

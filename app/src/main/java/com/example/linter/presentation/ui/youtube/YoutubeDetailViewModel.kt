@@ -296,8 +296,20 @@ class YoutubeDetailViewModel : ViewModel() {
 
     fun onMarkAsKnown(word: String, contextCardId: Long? = null) {
         viewModelScope.launch {
-            if (contextCardId != null) vocabRepo.moveCardToKnown(contextCardId, word)
-            else vocabRepo.markAsKnown(word)
+            if (contextCardId != null) {
+                vocabRepo.moveCardToKnown(contextCardId, word)
+            } else {
+                // Извлекаем переводы и контекст из открытого попапа NewWord
+                val trans = (_uiState.value.popupState as? PopupState.NewWord)?.translations
+                val context = (_uiState.value.popupState as? PopupState.NewWord)?.contextSentence ?: ""
+
+                vocabRepo.markAsKnown(
+                    word = word,
+                    translations = trans,
+                    contextSentence = context,
+                    youtubeVideoId = _uiState.value.videoId
+                )
+            }
             refreshWordState(word)
             dismissPopup()
         }

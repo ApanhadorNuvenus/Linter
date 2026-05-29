@@ -199,7 +199,16 @@ class LectureDetailViewModel : ViewModel() {
             if (contextCardId != null) {
                 vocabularyRepository.moveCardToKnown(contextCardId, word)
             } else {
-                vocabularyRepository.markAsKnown(word)
+                // Извлекаем переводы и контекст из открытого попапа NewWord
+                val trans = (_uiState.value.popupState as? PopupState.NewWord)?.translations
+                val context = (_uiState.value.popupState as? PopupState.NewWord)?.contextSentence ?: ""
+
+                vocabularyRepository.markAsKnown(
+                    word = word,
+                    translations = trans,
+                    contextSentence = context,
+                    lectureId = _uiState.value.lectureId
+                )
             }
             refreshWordState(word)
             dismissPopup()
