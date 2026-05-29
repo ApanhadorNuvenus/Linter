@@ -33,25 +33,17 @@ fun VocabularyScreen(
     val uiState by viewModel.uiState.collectAsState()
 
     // Алгоритм фильтрации на стороне UI
+    // ИСПРАВЛЕНИЕ: 100% точный фильтр без эвристик, считывающий оригинальный язык карточки из БД
     val filteredWords = remember(uiState.words, uiState.wordMetas, uiState.searchQuery, uiState.selectedLanguage, uiState.selectedStatus) {
         uiState.words.filter { item ->
             val matchesSearch = item.text.contains(uiState.searchQuery, ignoreCase = true)
             val meta = uiState.wordMetas[item.text.lowercase()]
 
-            // Фильтр по языкам
             val matchesLanguage = when (uiState.selectedLanguage) {
                 "All" -> true
-                "en" -> {
-                    val isFr = item.text.any { it in listOf('é','è','à','ç','ù','œ','â','ê','î','ô','û','ë') }
-                    !isFr
-                }
-                "fr" -> {
-                    item.text.any { it in listOf('é','è','à','ç','ù','œ','â','ê','î','ô','û','ë') }
-                }
-                else -> true
+                else -> meta?.language == uiState.selectedLanguage
             }
 
-            // Фильтр по этапам СРС-изучения
             val matchesStatus = when (uiState.selectedStatus) {
                 "All" -> true
                 else -> meta?.learningStatus?.name == uiState.selectedStatus

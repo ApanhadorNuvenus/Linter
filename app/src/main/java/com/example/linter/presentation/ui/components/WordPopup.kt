@@ -298,6 +298,28 @@ fun WordPopup(
                     is PopupState.LearningWord -> {
                         val savedCustom = state.meta.translations?.custom
 
+                        if (!state.meta.hasFlashCard) {
+                            Button(
+                                onClick = {
+                                    // Клик воссоздает FlashCard в БД и возвращает слово в СРС-повторения
+                                    onChangeLearningStatus(
+                                        state.meta.contextCardId!!,
+                                        state.wordOrPhrase,
+                                        state.meta.learningStatus ?: LearningStatus.NEW
+                                    )
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                ),
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Добавить в повторение (РП)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+
                         if (isEditingCustom) {
                             OutlinedTextField(
                                 value = customInput,

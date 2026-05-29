@@ -32,15 +32,18 @@ class ReviewRepositoryImpl(
     )
 
     // Автоопределение языка контекстной карты без изменения схем таблиц
+    // ИСПРАВЛЕНИЕ: 100% точное определение языка карточки через прямое связывание с лекцией/видео в БД
     private fun getCardLanguage(card: ContextCardEntity): String {
         if (card.lectureId > 0L) {
             val lecture = ObjectBox.lectureBox[card.lectureId]
             if (lecture != null) return lecture.language
         }
         if (card.youtubeVideoId > 0L) {
-            // Если в предложении есть специфические французские символы — это французский
-            val isFrench = card.contextSentence.any { it in listOf('é', 'è', 'à', 'ç', 'ù', 'œ', 'â', 'ê', 'î', 'ô', 'û', 'ë') }
-            if (isFrench) return "fr"
+            val video = ObjectBox.store.boxFor(com.example.linter.data.local.entity.YoutubeVideoEntity::class.java)[card.youtubeVideoId]
+            if (video != null) {
+                // ИСПРАВЛЕНИЕ: Безопасное разворачивание Nullable-поля старых записей
+                return video.language ?: "en"
+            }
         }
         return "en"
     }
@@ -169,4 +172,14 @@ class ReviewRepositoryImpl(
         entity.postponeUntilMillis = calendar.timeInMillis
         flashCardBox.put(entity)
     }
+
+    override suspend fun deleteCard(flashCardEntityId: Long) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            // ИСПРАВЛЕНИЕ: Удаляем ТОЛЬКО техническую карточку планировщика FSRS.
+            // Исходное доменное представление (ContextCardEntity) оставляем нетронутым,
+            // чтобы слово сохраняло свой желтый (изучаемый) статус на страницах лекций и субтитров.
+            flashCardBox.remove(flashCardEntityId)
+        }
+    }
+
 }

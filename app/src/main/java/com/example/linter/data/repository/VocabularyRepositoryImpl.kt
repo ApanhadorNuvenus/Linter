@@ -4,6 +4,7 @@ import android.content.Context
 import com.example.linter.data.local.ObjectBox
 import com.example.linter.data.local.entity.ContextCardEntity
 import com.example.linter.data.local.entity.ContextCardEntity_
+import com.example.linter.data.local.entity.FlashCardEntity_
 import com.example.linter.data.local.entity.VocabularyItemEntity
 import com.example.linter.data.local.entity.VocabularyItemEntity_
 import com.example.linter.domain.model.LearningStatus
@@ -41,6 +42,15 @@ class VocabularyRepositoryImpl(
         }
         val cardMap = activeCards.associateBy { it.vocabularyItemId }
 
+        // Пакетный запрос: Выбираем все активные SRS-карточки планировщика в один запрос к БД
+        val activeCardIds = activeCards.map { it.id }.toLongArray()
+        val flashCards = if (activeCardIds.isNotEmpty()) {
+            ObjectBox.flashCardBox.query(FlashCardEntity_.contextCardId.oneOf(activeCardIds)).build().find()
+        } else {
+            emptyList()
+        }
+        val flashCardMap = flashCards.associateBy { it.contextCardId }
+
         for (word in uniqueWords) {
             val vocabItem = vocabMap[word]
             if (vocabItem == null) {
@@ -54,6 +64,10 @@ class VocabularyRepositoryImpl(
 
             val activeCard = cardMap[vocabItem.id]
             if (activeCard != null) {
+                val cardLang = getCardLanguage(activeCard)
+                // Проверяем, существует ли физическая запись планировщика в БД для этой карты
+                val hasFlashCard = flashCardMap.containsKey(activeCard.id)
+
                 result[word] = WordMeta(
                     status = UiWordStatus.YELLOW,
                     learningStatus = LearningStatus.fromLevel(activeCard.status),
@@ -61,9 +75,11 @@ class VocabularyRepositoryImpl(
                         mlKit = activeCard.translation,
                         onnx = activeCard.translationOnnx,
                         cloud = activeCard.translationCloud,
-                        custom = activeCard.translationCustom // Чтение кастомного перевода
+                        custom = activeCard.translationCustom
                     ),
-                    contextCardId = activeCard.id
+                    contextCardId = activeCard.id,
+                    language = cardLang,
+                    hasFlashCard = hasFlashCard // Запись статуса РП
                 )
             } else {
                 result[word] = WordMeta(status = UiWordStatus.BLUE)
@@ -71,6 +87,7 @@ class VocabularyRepositoryImpl(
         }
         result
     }
+
 
     override suspend fun getLearningPhrasesMetas(): List<Pair<String, WordMeta>> = withContext(Dispatchers.IO) {
         val phraseCards = cardBox.all
@@ -80,10 +97,22 @@ class VocabularyRepositoryImpl(
         val vocabItems = vocabBox.query(VocabularyItemEntity_.id.oneOf(cardItemIds)).build().find()
         val vocabMap = vocabItems.associateBy { it.id }
 
+        // Пакетный запрос SRS планировщика для словосочетаний
+        val activeCardIds = phraseCards.map { it.id }.toLongArray()
+        val flashCards = if (activeCardIds.isNotEmpty()) {
+            ObjectBox.flashCardBox.query(FlashCardEntity_.contextCardId.oneOf(activeCardIds)).build().find()
+        } else {
+            emptyList()
+        }
+        val flashCardMap = flashCards.associateBy { it.contextCardId }
+
         val result = mutableListOf<Pair<String, WordMeta>>()
         for (card in phraseCards) {
             val vocabItem = vocabMap[card.vocabularyItemId]
             if (vocabItem != null && vocabItem.text.contains(" ") && !vocabItem.isKnown && !vocabItem.isIgnored) {
+                val cardLang = getCardLanguage(card)
+                val hasFlashCard = flashCardMap.containsKey(card.id)
+
                 result.add(
                     vocabItem.text to WordMeta(
                         status = UiWordStatus.YELLOW,
@@ -92,9 +121,11 @@ class VocabularyRepositoryImpl(
                             mlKit = card.translation,
                             onnx = card.translationOnnx,
                             cloud = card.translationCloud,
-                            custom = card.translationCustom // Чтение кастомного перевода
+                            custom = card.translationCustom
                         ),
-                        contextCardId = card.id
+                        contextCardId = card.id,
+                        language = cardLang,
+                        hasFlashCard = hasFlashCard
                     )
                 )
             }
@@ -253,6 +284,23 @@ class VocabularyRepositoryImpl(
             val card = cardBox[cardId] ?: return@withContext
             card.status = newStatus.level
             cardBox.put(card)
+
+            // ИСПРАВЛЕНИЕ: Если карточка была исключена из РП (FlashCardEntity удалена),
+            // но пользователь вручную меняет статус/уровень в попапе, мы автоматически воссоздаем SRS-планировщик!
+            val existingFlashCard = ObjectBox.flashCardBox.query(FlashCardEntity_.contextCardId.equal(cardId)).build().findFirst()
+            if (existingFlashCard == null) {
+                val newFlashCard = com.example.linter.data.local.entity.FlashCardEntity(
+                    contextCardId = cardId,
+                    stability = 0.0,
+                    difficulty = 0.0,
+                    interval = 0,
+                    dueDateMillis = System.currentTimeMillis(),
+                    reviewCount = 0,
+                    lastReviewMillis = System.currentTimeMillis(),
+                    phase = com.example.linter.data.fsrs.CardPhase.Added.value
+                )
+                ObjectBox.flashCardBox.put(newFlashCard)
+            }
         }
     }
 
@@ -270,4 +318,22 @@ class VocabularyRepositoryImpl(
             cardBox.put(card)
         }
     }
+
+
+    // ИСПРАВЛЕНИЕ: Метод для точного считывания языка контекстной карты из БД
+    private fun getCardLanguage(card: ContextCardEntity): String {
+        if (card.lectureId > 0L) {
+            val lecture = ObjectBox.lectureBox[card.lectureId]
+            if (lecture != null) return lecture.language
+        }
+        if (card.youtubeVideoId > 0L) {
+            val video = ObjectBox.store.boxFor(com.example.linter.data.local.entity.YoutubeVideoEntity::class.java)[card.youtubeVideoId]
+            if (video != null) {
+                // ИСПРАВЛЕНИЕ: Безопасное разворачивание Nullable-поля старых записей
+                return video.language ?: "en"
+            }
+        }
+        return "en"
+    }
+
 }

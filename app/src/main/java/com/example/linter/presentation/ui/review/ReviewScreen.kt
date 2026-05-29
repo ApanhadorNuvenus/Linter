@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Delete // Иконка корзины для удаления
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -79,8 +80,16 @@ fun ReviewScreen(
                 },
                 navigationIcon = { TextButton(onClick = onFinish) { Text("Закрыть") } },
                 actions = {
-                    // Кнопка откладывания карточки до завтра
                     if (!uiState.isFinished && !uiState.isLoading && uiState.currentItem != null) {
+                        // Кнопка УДАЛЕНИЯ карточки
+                        IconButton(onClick = { viewModel.deleteCurrentCard() }) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Удалить карточку",
+                                tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                            )
+                        }
+
                         IconButton(onClick = { viewModel.postponeCurrentCard() }) {
                             Icon(
                                 imageVector = Icons.Default.DateRange,
@@ -155,9 +164,15 @@ fun ReviewCard(
     onClearSelection: () -> Unit,
     onSaveCustomTranslation: (Long, String, String) -> Unit
 ) {
-    // На лету рассчитываем укороченный контекст (Sliding Window) с сохранением позиции подсветки
     val trimmedContextResult = remember(item.contextSentence, item.word) {
         getTrimmedContext(item.contextSentence, item.word, maxWordsAround = 4)
+    }
+
+    // ИСПРАВЛЕНИЕ: Математический расчет сдвига (shift) для предотвращения смещения выделения текста
+    val textShift = remember(trimmedContextResult, item.targetWordRange) {
+        val originalStart = item.targetWordRange?.first ?: 0
+        val trimmedStart = trimmedContextResult.targetRange?.first ?: 0
+        originalStart - trimmedStart
     }
 
     Column(
@@ -166,16 +181,14 @@ fun ReviewCard(
     ) {
         Spacer(modifier = Modifier.weight(1f))
 
-        // Строим стилизованную строку контекста
         val annotatedContext = buildAnnotatedString {
             append(trimmedContextResult.text)
 
-            // Выделяем фоновым цветом слова на странице, если они есть в метах
+            // Подсветка окружающих известных слов
             item.tokens.filter { it.isWord }.forEach { token ->
                 val meta = item.wordMeta[token.value.lowercase()]
                 val bgColor = getWordColor(meta?.status)
                 if (bgColor != Color.Transparent) {
-                    // Проверяем вхождение в границы урезанной строки
                     val indexInTrimmed = trimmedContextResult.text.indexOf(token.value, ignoreCase = true)
                     if (indexInTrimmed != -1) {
                         addStyle(SpanStyle(background = bgColor), indexInTrimmed, indexInTrimmed + token.value.length)
@@ -183,7 +196,6 @@ fun ReviewCard(
                 }
             }
 
-            // Фокусировка на целевом слове: полужирный шрифт + нижнее подчеркивание
             trimmedContextResult.targetRange?.let { range ->
                 addStyle(
                     SpanStyle(
@@ -196,12 +208,16 @@ fun ReviewCard(
                 )
             }
 
-            // Активное выделение свайпом
+            // ИСПРАВЛЕНИЕ: Визуальная маска выделения теперь рендерится с учетом обратного математического сдвига trimmed-текста
             if (selectionRange != null) {
-                val intersectStart = max(selectionRange.first, 0)
-                val intersectEnd = min(selectionRange.last + 1, trimmedContextResult.text.length)
-                if (intersectStart < intersectEnd) {
-                    addStyle(SpanStyle(background = Color.Gray.copy(alpha = 0.4f)), intersectStart, intersectEnd)
+                val trimmedStart = max(0, selectionRange.first - textShift)
+                val trimmedEnd = min(trimmedContextResult.text.length, selectionRange.last + 1 - textShift)
+                if (trimmedStart < trimmedEnd) {
+                    addStyle(
+                        style = SpanStyle(background = Color.Gray.copy(alpha = 0.4f)),
+                        start = trimmedStart,
+                        end = trimmedEnd
+                    )
                 }
             }
         }
@@ -218,7 +234,13 @@ fun ReviewCard(
                     detectTapGestures(
                         onTap = { pos ->
                             textLayoutResult?.getOffsetForPosition(pos)?.let { offset ->
-                                onWordClick(offset)
+                                val originalOffset = offset + textShift
+                                val targetRange = item.targetWordRange
+
+                                // ИСПРАВЛЕНИЕ: Блокировка нажатия на само тестируемое слово
+                                if (targetRange == null || originalOffset !in targetRange) {
+                                    onWordClick(originalOffset)
+                                }
                             }
                         }
                     )
@@ -227,15 +249,35 @@ fun ReviewCard(
                     detectDragGesturesAfterLongPress(
                         onDragStart = { pos ->
                             textLayoutResult?.getOffsetForPosition(pos)?.let { offset ->
-                                onSelectionStart(offset)
+                                val originalOffset = offset + textShift
+                                val targetRange = item.targetWordRange
+
+                                // ИСПРАВЛЕНИЕ: Запрет драга по целевому слову
+                                if (targetRange == null || originalOffset !in targetRange) {
+                                    onSelectionStart(originalOffset)
+                                }
                             }
                         },
                         onDrag = { change, _ ->
                             textLayoutResult?.getOffsetForPosition(change.position)?.let { offset ->
-                                onSelectionDrag(offset)
+                                val originalOffset = offset + textShift
+                                onSelectionDrag(originalOffset)
                             }
                         },
-                        onDragEnd = { onSelectionEnd() },
+                        onDragEnd = {
+                            val targetRange = item.targetWordRange
+
+                            // Блокировка перевода словосочетаний, задевающих целевое слово
+                            val isCheating = targetRange != null && selectionRange != null && (
+                                    selectionRange.first in targetRange || selectionRange.last in targetRange
+                                    )
+
+                            if (!isCheating) {
+                                onSelectionEnd()
+                            } else {
+                                onClearSelection()
+                            }
+                        },
                         onDragCancel = { onClearSelection() }
                     )
                 }
@@ -245,7 +287,6 @@ fun ReviewCard(
         Text(text = item.word, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Black)
         Spacer(modifier = Modifier.height(32.dp))
 
-        // Отображение ответа и редактирования перевода
         if (showAnswer) {
             HorizontalDivider(modifier = Modifier.fillMaxWidth(0.8f))
             Spacer(modifier = Modifier.height(16.dp))
@@ -254,7 +295,6 @@ fun ReviewCard(
             var editInput by remember { mutableStateOf("") }
             var showAlternatives by remember { mutableStateOf(false) }
 
-            // Сбрасываем режимы редактирования при переключении карточек
             LaunchedEffect(item) {
                 isEditing = false
                 editInput = ""
@@ -312,7 +352,6 @@ fun ReviewCard(
                     }
                 }
 
-                // Кнопка сворачивания альтернативных автопереводов
                 TextButton(
                     onClick = { showAlternatives = !showAlternatives },
                     modifier = Modifier.padding(top = 8.dp)
@@ -377,13 +416,11 @@ private fun getWordColor(status: UiWordStatus?): Color {
     }
 }
 
-// Хелперные структуры для урезания текста
 data class TrimmedContext(
     val text: String,
     val targetRange: IntRange?
 )
 
-// Алгоритм скользящего окна (Sliding Window) урезания длинного предложения
 fun getTrimmedContext(
     contextSentence: String,
     targetWord: String,
@@ -393,30 +430,27 @@ fun getTrimmedContext(
         return TrimmedContext("", null)
     }
 
-    val cleanContext = contextSentence.trim().replace("\n", " ")
-    val targetIndex = cleanContext.indexOf(targetWord, ignoreCase = true)
+    // НЕ вызываем .trim() и .replace(), чтобы сохранить оригинальную длину строки и индексы
+    val targetIndex = contextSentence.indexOf(targetWord, ignoreCase = true)
 
     if (targetIndex == -1) {
-        return TrimmedContext(cleanContext, null)
+        return TrimmedContext(contextSentence, null)
     }
 
     val targetLength = targetWord.length
     val targetEndIndex = targetIndex + targetLength
 
-    // Делим левую и правую части предложения на слова
-    val leftPart = cleanContext.substring(0, targetIndex)
+    val leftPart = contextSentence.substring(0, targetIndex)
     val leftWords = leftPart.split(Regex("\\s+")).filter { it.isNotEmpty() }
 
-    val rightPart = cleanContext.substring(targetEndIndex)
+    val rightPart = contextSentence.substring(targetEndIndex)
     val rightWords = rightPart.split(Regex("\\s+")).filter { it.isNotEmpty() }
 
-    // Обрезаем массив слов по границам скользящего окна
     val leftTrimmed = leftWords.takeLast(maxWordsAround)
     val rightTrimmed = rightWords.take(maxWordsAround)
 
-    val sb = StringBuilder()
+    val sb = java.lang.StringBuilder()
 
-    // Левое многоточие
     val hasLeftTrim = leftWords.size > maxWordsAround
     if (hasLeftTrim) {
         sb.append("... ")
@@ -427,9 +461,8 @@ fun getTrimmedContext(
         sb.append(leftWordsStr).append(" ")
     }
 
-    // Фиксируем новые координаты целевого слова во вновь созданной строке
     val newTargetStart = sb.length
-    sb.append(cleanContext.substring(targetIndex, targetEndIndex))
+    sb.append(contextSentence.substring(targetIndex, targetEndIndex))
     val newTargetEnd = sb.length
 
     val rightWordsStr = rightTrimmed.joinToString(" ")
@@ -437,7 +470,6 @@ fun getTrimmedContext(
         sb.append(" ").append(rightWordsStr)
     }
 
-    // Правое многоточие
     val hasRightTrim = rightWords.size > maxWordsAround
     if (hasRightTrim) {
         sb.append(" ...")

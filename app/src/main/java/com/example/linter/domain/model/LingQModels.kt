@@ -10,7 +10,8 @@ enum class UiWordStatus { BLUE, YELLOW, TRANSPARENT }
 data class WordMeta(
     val status: UiWordStatus,
     val learningStatus: LearningStatus? = null,
-    // ИЗМЕНЕНИЕ: Теперь здесь хранится комплексный объект перевода
     val translations: MultiTranslation? = null,
-    val contextCardId: Long? = null
+    val contextCardId: Long? = null,
+    val language: String? = null,
+    val hasFlashCard: Boolean = true // Флаг: планируется ли слово в СРС-повторениях прямо сейчас
 )

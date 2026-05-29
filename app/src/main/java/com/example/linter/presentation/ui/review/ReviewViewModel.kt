@@ -110,6 +110,43 @@ class ReviewViewModel(
 
         viewModelScope.launch {
             reviewRepository.submitReview(currentItem.flashCardEntityId, grade)
+
+            val newQueue = state.queue.drop(1).toMutableList()
+
+            // ИСПРАВЛЕНИЕ: Если карточка завалена (Again), возвращаем ее в локальную очередь
+            if (grade.interval < 1) {
+                val updatedFsrs = currentItem.fsrsCard.copy(
+                    reviewCount = currentItem.fsrsCard.reviewCount + 1,
+                    interval = grade.interval,
+                    phase = com.example.linter.data.fsrs.CardPhase.Review.value
+                )
+                newQueue.add(currentItem.copy(fsrsCard = updatedFsrs))
+            }
+
+            if (newQueue.isEmpty()) {
+                val moreItems = reviewRepository.getDueReviewItems(lang = selectedLanguage, lookaheadMs = 600_000L)
+                if (moreItems.isEmpty()) {
+                    _uiState.value = state.copy(queue = emptyList(), currentItem = null, currentBucket = null, isFinished = true, showAnswer = false, blueCount = 0, redCount = 0, greenCount = 0)
+                } else {
+                    val (b, r, g) = calculateCounters(moreItems)
+                    val nextItem = moreItems.first()
+                    _uiState.value = state.copy(queue = moreItems, currentItem = nextItem, currentBucket = getBucketForItem(nextItem), showAnswer = false, blueCount = b, redCount = r, greenCount = g)
+                }
+            } else {
+                val (b, r, g) = calculateCounters(newQueue)
+                val nextItem = newQueue.first()
+                _uiState.value = state.copy(queue = newQueue, currentItem = nextItem, currentBucket = getBucketForItem(nextItem), showAnswer = false, blueCount = b, redCount = r, greenCount = g)
+            }
+        }
+    }
+
+    // Экшен удаления текущей карточки из СРС
+    fun deleteCurrentCard() {
+        val state = _uiState.value
+        val currentItem = state.currentItem ?: return
+
+        viewModelScope.launch {
+            reviewRepository.deleteCard(currentItem.flashCardEntityId)
             advanceQueue()
         }
     }
@@ -160,8 +197,24 @@ class ReviewViewModel(
 
     fun onSelectionStart(offset: Int) {
         val currentItem = _uiState.value.currentItem ?: return
-        val token = currentItem.tokens.find { it.startIndex <= offset && it.endIndex > offset } ?: return
-        dragStartTokenIndex = currentItem.tokens.indexOf(token)
+        val tokens = currentItem.tokens
+
+        // Находим токен по офсету
+        var token = tokens.find { it.startIndex <= offset && it.endIndex > offset } ?: return
+
+        // ИСПРАВЛЕНИЕ (Smart Snapping): Если тап попал на пробел или знак препинания,
+        // автоматически притягиваем координату к ближайшему реальному слову!
+        if (!token.isWord) {
+            val closestWord = tokens.minByOrNull {
+                if (!it.isWord) Int.MAX_VALUE
+                else minOf(kotlin.math.abs(it.startIndex - offset), kotlin.math.abs(it.endIndex - offset))
+            }
+            if (closestWord != null) {
+                token = closestWord
+            }
+        }
+
+        dragStartTokenIndex = tokens.indexOf(token)
         _uiState.value = _uiState.value.copy(selectionRange = token.startIndex until token.endIndex)
     }
 
@@ -169,12 +222,27 @@ class ReviewViewModel(
         val state = _uiState.value
         val currentItem = state.currentItem ?: return
         if (dragStartTokenIndex == -1) return
-        val currentToken = currentItem.tokens.find { it.startIndex <= offset && it.endIndex > offset }
-        val currentIndex = currentToken?.let { currentItem.tokens.indexOf(it) } ?: return
+        val tokens = currentItem.tokens
 
-        val startToken = currentItem.tokens[min(dragStartTokenIndex, currentIndex)]
-        val endToken = currentItem.tokens[max(dragStartTokenIndex, currentIndex)]
-        _uiState.value = state.copy(selectionRange = startToken.startIndex until endToken.endIndex)
+        var currentToken = tokens.find { it.startIndex <= offset && it.endIndex > offset } ?: return
+
+        // ИСПРАВЛЕНИЕ (Smart Snapping): Притягиваем границу драга к ближайшему реальному слову
+        if (!currentToken.isWord) {
+            val closestWord = tokens.minByOrNull {
+                if (!it.isWord) Int.MAX_VALUE
+                else minOf(kotlin.math.abs(it.startIndex - offset), kotlin.math.abs(it.endIndex - offset))
+            }
+            if (closestWord != null) {
+                currentToken = closestWord
+            }
+        }
+
+        val currentIndex = tokens.indexOf(currentToken)
+        if (currentIndex != -1) {
+            val startToken = tokens[min(dragStartTokenIndex, currentIndex)]
+            val endToken = tokens[max(dragStartTokenIndex, currentIndex)]
+            _uiState.value = state.copy(selectionRange = startToken.startIndex until endToken.endIndex)
+        }
     }
 
     fun onSelectionEnd() {

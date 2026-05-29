@@ -21,14 +21,11 @@ data class ReviewItem(
 )
 
 interface ReviewRepository {
-    // Получение счетчика просроченных карточек для конкретного языка
     suspend fun getDueCardsCount(lang: String): Int
-
-    // Получение списка карточек для повторения конкретного языка
     suspend fun getDueReviewItems(lang: String, lookaheadMs: Long = 600_000L): List<ReviewItem>
-
     suspend fun submitReview(flashCardEntityId: Long, grade: Grade)
-
-    // Отложить карточку до завтра
     suspend fun postponeCard(flashCardEntityId: Long)
+
+    // Удаление карточки и ее связанных доменных представлений
+    suspend fun deleteCard(flashCardEntityId: Long)
 }
