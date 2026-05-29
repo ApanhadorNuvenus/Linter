@@ -42,7 +42,6 @@ class VocabularyRepositoryImpl(
         }
         val cardMap = activeCards.associateBy { it.vocabularyItemId }
 
-        // Пакетный запрос: Выбираем все активные SRS-карточки планировщика в один запрос к БД
         val activeCardIds = activeCards.map { it.id }.toLongArray()
         val flashCards = if (activeCardIds.isNotEmpty()) {
             ObjectBox.flashCardBox.query(FlashCardEntity_.contextCardId.oneOf(activeCardIds)).build().find()
@@ -65,7 +64,6 @@ class VocabularyRepositoryImpl(
             val activeCard = cardMap[vocabItem.id]
             if (activeCard != null) {
                 val cardLang = getCardLanguage(activeCard)
-                // Проверяем, существует ли физическая запись планировщика в БД для этой карты
                 val hasFlashCard = flashCardMap.containsKey(activeCard.id)
 
                 result[word] = WordMeta(
@@ -79,7 +77,7 @@ class VocabularyRepositoryImpl(
                     ),
                     contextCardId = activeCard.id,
                     language = cardLang,
-                    hasFlashCard = hasFlashCard // Запись статуса РП
+                    hasFlashCard = hasFlashCard
                 )
             } else {
                 result[word] = WordMeta(status = UiWordStatus.BLUE)
@@ -87,7 +85,6 @@ class VocabularyRepositoryImpl(
         }
         result
     }
-
 
     override suspend fun getLearningPhrasesMetas(): List<Pair<String, WordMeta>> = withContext(Dispatchers.IO) {
         val phraseCards = cardBox.all
@@ -97,7 +94,6 @@ class VocabularyRepositoryImpl(
         val vocabItems = vocabBox.query(VocabularyItemEntity_.id.oneOf(cardItemIds)).build().find()
         val vocabMap = vocabItems.associateBy { it.id }
 
-        // Пакетный запрос SRS планировщика для словосочетаний
         val activeCardIds = phraseCards.map { it.id }.toLongArray()
         val flashCards = if (activeCardIds.isNotEmpty()) {
             ObjectBox.flashCardBox.query(FlashCardEntity_.contextCardId.oneOf(activeCardIds)).build().find()
@@ -144,7 +140,6 @@ class VocabularyRepositoryImpl(
         var currentTranslations = MultiTranslation()
 
         if (!isOnnxLoaded) {
-            // СЦЕНАРИЙ 1. ХОЛОДНЫЙ СТАРТ: Сразу пускаем пустую структуру со скелетонами
             send(currentTranslations)
 
             if (showMl) {
@@ -169,7 +164,6 @@ class VocabularyRepositoryImpl(
                 }
             }
         } else {
-            // СЦЕНАРИЙ 2. ГОРЯЧИЙ СТАРТ: Google ML Kit транслируется за 30 мс, а ONNX плавно догружается
             coroutineScope {
                 val mlDeferred = if (showMl) async { translator.translate(wordOrPhrase, sourceLang, "ru").getOrNull() } else null
                 val onnxDeferred = if (showOnnx) async { AppModule.onnxTranslator.translate(wordOrPhrase, sourceLang, "ru").getOrNull() } else null
@@ -182,14 +176,12 @@ class VocabularyRepositoryImpl(
                     }
                 }
 
-                // Ждем супер-быстрый Google ML Kit и СРАЗУ открываем окно (попап) без задержки
                 val mlResult = mlDeferred?.await()
                 if (showMl && mlResult != null) {
                     currentTranslations = currentTranslations.copy(mlKit = mlResult)
                     send(currentTranslations)
                 }
 
-                // ONNX догрузится в фоне следом и плавно обновит свою строчку в попапе
                 val onnxResult = onnxDeferred?.await()
                 currentTranslations = currentTranslations.copy(
                     onnx = if (showOnnx) (onnxResult ?: "Ошибка перевода") else null
@@ -217,8 +209,6 @@ class VocabularyRepositoryImpl(
             item.isKnown = true
             vocabBox.put(item)
 
-            // Если предоставлен перевод (слово помечается как известное с самого начала),
-            // сохраняем ContextCardEntity с переводами, но НЕ создаем FlashCardEntity!
             if (translations != null) {
                 val card = ContextCardEntity(
                     vocabularyItemId = item.id,
@@ -244,39 +234,39 @@ class VocabularyRepositoryImpl(
         }
     }
 
+    // ИСПРАВЛЕНИЕ: Возвращает contextCardId
     override suspend fun createLearningCard(
         word: String, lectureId: Long, youtubeVideoId: Long,
         contextSentence: String, translations: MultiTranslation, status: LearningStatus
-    ) {
-        withContext(Dispatchers.IO) {
-            val item = getOrCreateVocabItem(word)
-            item.isKnown = false
-            item.isIgnored = false
-            vocabBox.put(item)
+    ): Long = withContext(Dispatchers.IO) {
+        val item = getOrCreateVocabItem(word)
+        item.isKnown = false
+        item.isIgnored = false
+        vocabBox.put(item)
 
-            val card = ContextCardEntity(
-                vocabularyItemId = item.id, lectureId = lectureId, youtubeVideoId = youtubeVideoId,
-                contextSentence = contextSentence,
-                translation = translations.mlKit ?: "",
-                translationOnnx = translations.onnx,
-                translationCloud = translations.cloud,
-                translationCustom = translations.custom, // Запись кастомного перевода
-                status = status.level
-            )
-            val contextCardId = cardBox.put(card)
+        val card = ContextCardEntity(
+            vocabularyItemId = item.id, lectureId = lectureId, youtubeVideoId = youtubeVideoId,
+            contextSentence = contextSentence,
+            translation = translations.mlKit ?: "",
+            translationOnnx = translations.onnx,
+            translationCloud = translations.cloud,
+            translationCustom = translations.custom,
+            status = status.level
+        )
+        val contextCardId = cardBox.put(card)
 
-            val flashCard = com.example.linter.data.local.entity.FlashCardEntity(
-                contextCardId = contextCardId,
-                stability = 0.0,
-                difficulty = 0.0,
-                interval = 0,
-                dueDateMillis = System.currentTimeMillis(),
-                reviewCount = 0,
-                lastReviewMillis = System.currentTimeMillis(),
-                phase = com.example.linter.data.fsrs.CardPhase.Added.value
-            )
-            com.example.linter.data.local.ObjectBox.flashCardBox.put(flashCard)
-        }
+        val flashCard = com.example.linter.data.local.entity.FlashCardEntity(
+            contextCardId = contextCardId,
+            stability = 0.0,
+            difficulty = 0.0,
+            interval = 0,
+            dueDateMillis = System.currentTimeMillis(),
+            reviewCount = 0,
+            lastReviewMillis = System.currentTimeMillis(),
+            phase = com.example.linter.data.fsrs.CardPhase.Added.value
+        )
+        com.example.linter.data.local.ObjectBox.flashCardBox.put(flashCard)
+        contextCardId
     }
 
     override suspend fun updateCardStatus(cardId: Long, newStatus: LearningStatus) {
@@ -285,8 +275,6 @@ class VocabularyRepositoryImpl(
             card.status = newStatus.level
             cardBox.put(card)
 
-            // ИСПРАВЛЕНИЕ: Если карточка была исключена из РП (FlashCardEntity удалена),
-            // но пользователь вручную меняет статус/уровень в попапе, мы автоматически воссоздаем SRS-планировщик!
             val existingFlashCard = ObjectBox.flashCardBox.query(FlashCardEntity_.contextCardId.equal(cardId)).build().findFirst()
             if (existingFlashCard == null) {
                 val newFlashCard = com.example.linter.data.local.entity.FlashCardEntity(
@@ -319,8 +307,6 @@ class VocabularyRepositoryImpl(
         }
     }
 
-
-    // ИСПРАВЛЕНИЕ: Метод для точного считывания языка контекстной карты из БД
     private fun getCardLanguage(card: ContextCardEntity): String {
         if (card.lectureId > 0L) {
             val lecture = ObjectBox.lectureBox[card.lectureId]
@@ -329,11 +315,9 @@ class VocabularyRepositoryImpl(
         if (card.youtubeVideoId > 0L) {
             val video = ObjectBox.store.boxFor(com.example.linter.data.local.entity.YoutubeVideoEntity::class.java)[card.youtubeVideoId]
             if (video != null) {
-                // ИСПРАВЛЕНИЕ: Безопасное разворачивание Nullable-поля старых записей
                 return video.language ?: "en"
             }
         }
         return "en"
     }
-
 }

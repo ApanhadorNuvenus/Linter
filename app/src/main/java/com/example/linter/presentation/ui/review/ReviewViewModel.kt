@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -40,7 +41,6 @@ class ReviewViewModel(
     private val reviewRepository = AppModule.reviewRepository
     private val vocabularyRepository = AppModule.vocabularyRepository
 
-    // Извлекаем выбранный язык из аргументов навигации (default = "en")
     val selectedLanguage: String = savedStateHandle.get<String>("lang") ?: "en"
 
     private val _uiState = MutableStateFlow(ReviewUiState())
@@ -113,7 +113,6 @@ class ReviewViewModel(
 
             val newQueue = state.queue.drop(1).toMutableList()
 
-            // ИСПРАВЛЕНИЕ: Если карточка завалена (Again), возвращаем ее в локальную очередь
             if (grade.interval < 1) {
                 val updatedFsrs = currentItem.fsrsCard.copy(
                     reviewCount = currentItem.fsrsCard.reviewCount + 1,
@@ -140,7 +139,6 @@ class ReviewViewModel(
         }
     }
 
-    // Экшен удаления текущей карточки из СРС
     fun deleteCurrentCard() {
         val state = _uiState.value
         val currentItem = state.currentItem ?: return
@@ -151,7 +149,6 @@ class ReviewViewModel(
         }
     }
 
-    // Отложить текущую карточку
     fun postponeCurrentCard() {
         val state = _uiState.value
         val currentItem = state.currentItem ?: return
@@ -199,15 +196,12 @@ class ReviewViewModel(
         val currentItem = _uiState.value.currentItem ?: return
         val tokens = currentItem.tokens
 
-        // Находим токен по офсету
         var token = tokens.find { it.startIndex <= offset && it.endIndex > offset } ?: return
 
-        // ИСПРАВЛЕНИЕ (Smart Snapping): Если тап попал на пробел или знак препинания,
-        // автоматически притягиваем координату к ближайшему реальному слову!
         if (!token.isWord) {
             val closestWord = tokens.minByOrNull {
                 if (!it.isWord) Int.MAX_VALUE
-                else minOf(kotlin.math.abs(it.startIndex - offset), kotlin.math.abs(it.endIndex - offset))
+                else minOf(abs(it.startIndex - offset), abs(it.endIndex - offset))
             }
             if (closestWord != null) {
                 token = closestWord
@@ -226,11 +220,10 @@ class ReviewViewModel(
 
         var currentToken = tokens.find { it.startIndex <= offset && it.endIndex > offset } ?: return
 
-        // ИСПРАВЛЕНИЕ (Smart Snapping): Притягиваем границу драга к ближайшему реальному слову
         if (!currentToken.isWord) {
             val closestWord = tokens.minByOrNull {
                 if (!it.isWord) Int.MAX_VALUE
-                else minOf(kotlin.math.abs(it.startIndex - offset), kotlin.math.abs(it.endIndex - offset))
+                else minOf(abs(it.startIndex - offset), abs(it.endIndex - offset))
             }
             if (closestWord != null) {
                 currentToken = closestWord
@@ -266,6 +259,22 @@ class ReviewViewModel(
     private fun handleWordOpen(word: String) {
         val state = _uiState.value
         val currentItem = state.currentItem ?: return
+        val normalized = word.trim().lowercase()
+
+        if (normalized == currentItem.word.lowercase()) return
+
+        val wordsToCheck = if (normalized.contains(" ")) {
+            normalized.split(Regex("\\s+")).map { it.replace(Regex("[^\\p{L}']"), "") }
+        } else {
+            listOf(normalized)
+        }
+
+        // ИСПРАВЛЕНИЕ: Блокируем перевод ТОЛЬКО если во фразе есть хотя бы одно изучаемое (YELLOW) слово
+        val hasStudying = wordsToCheck.any { w ->
+            currentItem.wordMeta[w]?.status == UiWordStatus.YELLOW
+        }
+
+        if (hasStudying) return
 
         translationJob?.cancel()
         translationJob = viewModelScope.launch {
@@ -288,9 +297,42 @@ class ReviewViewModel(
         }
     }
 
+    // НОВОЕ: Динамическое добавление созданной карточки в текущую сессию РП
+    private suspend fun addReviewItemToQueue(contextCardId: Long) {
+        val state = _uiState.value
+        val newItem = reviewRepository.getReviewItemByContextCardId(contextCardId) ?: return
+
+        // Избегаем дубликатов, если карточка уже добавлена
+        if (state.queue.any { it.contextCardId == contextCardId }) return
+
+        val updatedQueue = state.queue.toMutableList()
+
+        // Вставляем сразу следующей картой (индекс 1), либо первой, если очередь была пуста
+        if (state.currentItem == null) {
+            updatedQueue.add(newItem)
+        } else {
+            updatedQueue.add(1, newItem)
+        }
+
+        val (b, r, g) = calculateCounters(updatedQueue)
+        val currentItem = state.currentItem ?: newItem
+
+        _uiState.value = state.copy(
+            queue = updatedQueue,
+            currentItem = currentItem,
+            currentBucket = getBucketForItem(currentItem),
+            isFinished = false,
+            blueCount = b,
+            redCount = r,
+            greenCount = g
+        )
+    }
+
     fun onStartLearning(word: String, translations: MultiTranslation, contextSentence: String) {
         viewModelScope.launch {
-            vocabularyRepository.createLearningCard(word, 0L, 0L, contextSentence, translations, LearningStatus.NEW)
+            // ИСПРАВЛЕНИЕ: Получаем ID созданной контекстной карты и сразу добавляем ее в РП
+            val newContextCardId = vocabularyRepository.createLearningCard(word, 0L, 0L, contextSentence, translations, LearningStatus.NEW)
+            addReviewItemToQueue(newContextCardId)
             refreshCurrentCard()
             dismissPopup()
         }
@@ -301,7 +343,6 @@ class ReviewViewModel(
             if (contextCardId != null) {
                 vocabularyRepository.moveCardToKnown(contextCardId, word)
             } else {
-                // Извлекаем переводы и контекст из открытого попапа NewWord
                 val trans = (_uiState.value.popupState as? PopupState.NewWord)?.translations
                 val context = (_uiState.value.popupState as? PopupState.NewWord)?.contextSentence ?: ""
 
@@ -327,6 +368,8 @@ class ReviewViewModel(
     fun onChangeLearningStatus(cardId: Long, word: String, newStatus: LearningStatus) {
         viewModelScope.launch {
             vocabularyRepository.updateCardStatus(cardId, newStatus)
+            // ИСПРАВЛЕНИЕ: Если статус изменен на активное обучение прямо в РП, динамически внедряем ее в очередь
+            addReviewItemToQueue(cardId)
             refreshCurrentCard()
             dismissPopup()
         }

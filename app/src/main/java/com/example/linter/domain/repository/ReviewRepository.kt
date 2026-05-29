@@ -25,7 +25,8 @@ interface ReviewRepository {
     suspend fun getDueReviewItems(lang: String, lookaheadMs: Long = 600_000L): List<ReviewItem>
     suspend fun submitReview(flashCardEntityId: Long, grade: Grade)
     suspend fun postponeCard(flashCardEntityId: Long)
-
-    // Удаление карточки и ее связанных доменных представлений
     suspend fun deleteCard(flashCardEntityId: Long)
+
+    // НОВОЕ: метод для точечной сборки ReviewItem для динамически добавленной в РП карточки
+    suspend fun getReviewItemByContextCardId(contextCardId: Long): ReviewItem?
 }

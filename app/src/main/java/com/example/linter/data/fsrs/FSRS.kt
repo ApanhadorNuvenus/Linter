@@ -35,7 +35,6 @@ class FSRS(
         Grade(color = colorAgain, title = "Again", choice = Rating.Again, durationMillis = 0, interval = 0, txt = "")
     )
 
-    // Высокоэффективное математическое округление без выделения памяти в куче
     private fun roundToTwoDecimals(value: Double): Double {
         if (value.isNaN() || value.isInfinite()) return 0.0
         return kotlin.math.round(value * 100.0) / 100.0
@@ -47,7 +46,7 @@ class FSRS(
         var stateGood: InitState
         var stateEasy: InitState
 
-        var durationHard = 5 * 60 * 1000L // 5min
+        var durationHard: Long
         var durationGood: Long
         var durationEasy: Long
 
@@ -63,18 +62,28 @@ class FSRS(
 
         when (flashCard.phase) {
             CardPhase.Added.value -> {
+                // Инициализируем состояния FSRS на основе рейтингов
                 stateAgain = initState(Rating.Again)
                 stateHard = initState(Rating.Hard)
                 stateGood = initState(Rating.Good)
                 stateEasy = initState(Rating.Easy)
 
-                ivlEasy = 1
+                // Динамический расчет интервалов на основе полученной из параметров стабильности
+                ivlHard = nextInterval(stateHard.stability)
+                ivlGood = nextInterval(stateGood.stability)
+                ivlEasy = nextInterval(stateEasy.stability)
 
-                txtHard = "5 Min"
-                txtGood = "10 Min"
-                txtEasy = "1 day"
+                // Гарантируем строгое логическое возрастание интервалов (Hard < Good < Easy)
+                ivlHard = max(1, ivlHard)
+                ivlGood = max(ivlHard + 1, ivlGood)
+                ivlEasy = max(ivlGood + 1, ivlEasy)
 
-                durationGood = 10 * 60 * 1000L
+                txtHard = convertDays(ivlHard)
+                txtGood = convertDays(ivlGood)
+                txtEasy = convertDays(ivlEasy)
+
+                durationHard = ivlHard * dayConvertor
+                durationGood = ivlGood * dayConvertor
                 durationEasy = ivlEasy * dayConvertor
             }
             CardPhase.ReLearning.value -> {
@@ -97,6 +106,7 @@ class FSRS(
                 ivlEasy = nextInterval(stateEasy.stability)
                 ivlEasy = max(ivlEasy, ivlGood + 1)
 
+                durationHard = 10 * 60 * 1000L // 10 Min
                 txtHard = "10 Min"
                 txtGood = convertDays(ivlGood)
                 txtEasy = convertDays(ivlEasy)
@@ -144,8 +154,8 @@ class FSRS(
     }
 
     private fun convertDays(days: Int): String {
-        return if (days > 365) "${days / 365.0} year"
-        else if (days > 30) "${days / 30.0} month"
+        return if (days > 365) "${roundToTwoDecimals(days / 365.0)} year"
+        else if (days > 30) "${roundToTwoDecimals(days / 30.0)} month"
         else "$days day"
     }
 
@@ -176,7 +186,8 @@ class FSRS(
     private fun initStability(rating: Rating): Double {
         val index = rating.value - 1
         val value = params.getOrElse(index) { 0.1 }
-        return roundToTwoDecimals(value.coerceAtMost(0.1))
+        // ИСПРАВЛЕНИЕ: Изменено с coerceAtMost на coerceAtLeast, чтобы стабильность не урезалась до 0.1 дня
+        return roundToTwoDecimals(value.coerceAtLeast(0.1))
     }
 
     private fun initState(rating: Rating): InitState = InitState(initDifficulty(rating), initStability(rating))

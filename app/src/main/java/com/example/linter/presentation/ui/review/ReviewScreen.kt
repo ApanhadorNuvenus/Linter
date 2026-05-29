@@ -10,7 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.Delete // Иконка корзины для удаления
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -81,7 +81,6 @@ fun ReviewScreen(
                 navigationIcon = { TextButton(onClick = onFinish) { Text("Закрыть") } },
                 actions = {
                     if (!uiState.isFinished && !uiState.isLoading && uiState.currentItem != null) {
-                        // Кнопка УДАЛЕНИЯ карточки
                         IconButton(onClick = { viewModel.deleteCurrentCard() }) {
                             Icon(
                                 imageVector = Icons.Default.Delete,
@@ -168,7 +167,6 @@ fun ReviewCard(
         getTrimmedContext(item.contextSentence, item.word, maxWordsAround = 4)
     }
 
-    // ИСПРАВЛЕНИЕ: Математический расчет сдвига (shift) для предотвращения смещения выделения текста
     val textShift = remember(trimmedContextResult, item.targetWordRange) {
         val originalStart = item.targetWordRange?.first ?: 0
         val trimmedStart = trimmedContextResult.targetRange?.first ?: 0
@@ -184,7 +182,7 @@ fun ReviewCard(
         val annotatedContext = buildAnnotatedString {
             append(trimmedContextResult.text)
 
-            // Подсветка окружающих известных слов
+            // Подсветка окружающих слов
             item.tokens.filter { it.isWord }.forEach { token ->
                 val meta = item.wordMeta[token.value.lowercase()]
                 val bgColor = getWordColor(meta?.status)
@@ -208,7 +206,6 @@ fun ReviewCard(
                 )
             }
 
-            // ИСПРАВЛЕНИЕ: Визуальная маска выделения теперь рендерится с учетом обратного математического сдвига trimmed-текста
             if (selectionRange != null) {
                 val trimmedStart = max(0, selectionRange.first - textShift)
                 val trimmedEnd = min(trimmedContextResult.text.length, selectionRange.last + 1 - textShift)
@@ -237,9 +234,16 @@ fun ReviewCard(
                                 val originalOffset = offset + textShift
                                 val targetRange = item.targetWordRange
 
-                                // ИСПРАВЛЕНИЕ: Блокировка нажатия на само тестируемое слово
                                 if (targetRange == null || originalOffset !in targetRange) {
-                                    onWordClick(originalOffset)
+                                    val clickedToken = item.tokens.find { it.startIndex <= originalOffset && it.endIndex > originalOffset && it.isWord }
+                                    val clickedWord = clickedToken?.value?.lowercase()
+
+                                    // ИСПРАВЛЕНИЕ: Блокируем тап ТОЛЬКО на изучаемые слова (YELLOW). Новые слова (BLUE) разблокированы.
+                                    val isStudying = clickedWord != null && item.wordMeta[clickedWord]?.status == UiWordStatus.YELLOW
+
+                                    if (!isStudying) {
+                                        onWordClick(originalOffset)
+                                    }
                                 }
                             }
                         }
@@ -252,8 +256,13 @@ fun ReviewCard(
                                 val originalOffset = offset + textShift
                                 val targetRange = item.targetWordRange
 
-                                // ИСПРАВЛЕНИЕ: Запрет драга по целевому слову
-                                if (targetRange == null || originalOffset !in targetRange) {
+                                val clickedToken = item.tokens.find { it.startIndex <= originalOffset && it.endIndex > originalOffset && it.isWord }
+                                val clickedWord = clickedToken?.value?.lowercase()
+
+                                // ИСПРАВЛЕНИЕ: Блокируем старт выделения ТОЛЬКО на изучаемых словах (YELLOW).
+                                val isStudying = clickedWord != null && item.wordMeta[clickedWord]?.status == UiWordStatus.YELLOW
+
+                                if ((targetRange == null || originalOffset !in targetRange) && !isStudying) {
                                     onSelectionStart(originalOffset)
                                 }
                             }
@@ -267,12 +276,23 @@ fun ReviewCard(
                         onDragEnd = {
                             val targetRange = item.targetWordRange
 
-                            // Блокировка перевода словосочетаний, задевающих целевое слово
-                            val isCheating = targetRange != null && selectionRange != null && (
+                            val isCheatingTarget = targetRange != null && selectionRange != null && (
                                     selectionRange.first in targetRange || selectionRange.last in targetRange
                                     )
 
-                            if (!isCheating) {
+                            // ИСПРАВЛЕНИЕ: Считаем подсказкой (читерством) пересечение ТОЛЬКО с изучаемыми (YELLOW) словами
+                            var isCheatingOthers = false
+                            if (selectionRange != null) {
+                                val selectedTokens = item.tokens.filter {
+                                    it.isWord && it.startIndex < selectionRange.last + 1 && it.endIndex > selectionRange.first
+                                }
+                                isCheatingOthers = selectedTokens.any { token ->
+                                    val w = token.value.lowercase()
+                                    item.wordMeta[w]?.status == UiWordStatus.YELLOW
+                                }
+                            }
+
+                            if (!isCheatingTarget && !isCheatingOthers) {
                                 onSelectionEnd()
                             } else {
                                 onClearSelection()
@@ -430,7 +450,6 @@ fun getTrimmedContext(
         return TrimmedContext("", null)
     }
 
-    // НЕ вызываем .trim() и .replace(), чтобы сохранить оригинальную длину строки и индексы
     val targetIndex = contextSentence.indexOf(targetWord, ignoreCase = true)
 
     if (targetIndex == -1) {

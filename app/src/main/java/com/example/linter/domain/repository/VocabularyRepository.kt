@@ -10,7 +10,6 @@ interface VocabularyRepository {
     suspend fun getLearningPhrasesMetas(): List<Pair<String, WordMeta>>
     suspend fun fetchMultiTranslations(wordOrPhrase: String, sourceLang: String): Flow<MultiTranslation>
 
-    // Обновленная сигнатура метода: сохраняет перевод и контекст при пометке "Знаю"
     suspend fun markAsKnown(
         word: String,
         translations: MultiTranslation? = null,
@@ -20,10 +19,13 @@ interface VocabularyRepository {
     )
 
     suspend fun markAsIgnored(word: String)
+
+    // ИСПРАВЛЕНИЕ: метод теперь возвращает созданный ID контекстной карты
     suspend fun createLearningCard(
         word: String, lectureId: Long, youtubeVideoId: Long = 0L,
         contextSentence: String, translations: MultiTranslation, status: LearningStatus
-    )
+    ): Long
+
     suspend fun updateCardStatus(cardId: Long, newStatus: LearningStatus)
     suspend fun moveCardToKnown(cardId: Long, word: String)
     suspend fun updateCustomTranslation(cardId: Long, customTranslation: String?)
