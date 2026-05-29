@@ -238,7 +238,7 @@ fun ReviewCard(
                                     val clickedToken = item.tokens.find { it.startIndex <= originalOffset && it.endIndex > originalOffset && it.isWord }
                                     val clickedWord = clickedToken?.value?.lowercase()
 
-                                    // ИСПРАВЛЕНИЕ: Блокируем тап ТОЛЬКО на изучаемые слова (YELLOW). Новые слова (BLUE) разблокированы.
+                                    // Блокируем одиночный тап ТОЛЬКО на изучаемые слова (YELLOW). Синие (BLUE) теперь разрешены!
                                     val isStudying = clickedWord != null && item.wordMeta[clickedWord]?.status == UiWordStatus.YELLOW
 
                                     if (!isStudying) {
@@ -254,17 +254,8 @@ fun ReviewCard(
                         onDragStart = { pos ->
                             textLayoutResult?.getOffsetForPosition(pos)?.let { offset ->
                                 val originalOffset = offset + textShift
-                                val targetRange = item.targetWordRange
-
-                                val clickedToken = item.tokens.find { it.startIndex <= originalOffset && it.endIndex > originalOffset && it.isWord }
-                                val clickedWord = clickedToken?.value?.lowercase()
-
-                                // ИСПРАВЛЕНИЕ: Блокируем старт выделения ТОЛЬКО на изучаемых словах (YELLOW).
-                                val isStudying = clickedWord != null && item.wordMeta[clickedWord]?.status == UiWordStatus.YELLOW
-
-                                if ((targetRange == null || originalOffset !in targetRange) && !isStudying) {
-                                    onSelectionStart(originalOffset)
-                                }
+                                // ИСПРАВЛЕНИЕ: Никаких блокировок при выделении предложения. Пользователь может начать свайп откуда угодно!
+                                onSelectionStart(originalOffset)
                             }
                         },
                         onDrag = { change, _ ->
@@ -274,29 +265,8 @@ fun ReviewCard(
                             }
                         },
                         onDragEnd = {
-                            val targetRange = item.targetWordRange
-
-                            val isCheatingTarget = targetRange != null && selectionRange != null && (
-                                    selectionRange.first in targetRange || selectionRange.last in targetRange
-                                    )
-
-                            // ИСПРАВЛЕНИЕ: Считаем подсказкой (читерством) пересечение ТОЛЬКО с изучаемыми (YELLOW) словами
-                            var isCheatingOthers = false
-                            if (selectionRange != null) {
-                                val selectedTokens = item.tokens.filter {
-                                    it.isWord && it.startIndex < selectionRange.last + 1 && it.endIndex > selectionRange.first
-                                }
-                                isCheatingOthers = selectedTokens.any { token ->
-                                    val w = token.value.lowercase()
-                                    item.wordMeta[w]?.status == UiWordStatus.YELLOW
-                                }
-                            }
-
-                            if (!isCheatingTarget && !isCheatingOthers) {
-                                onSelectionEnd()
-                            } else {
-                                onClearSelection()
-                            }
+                            // ИСПРАВЛЕНИЕ: Разрешаем свободный перевод любого выделенного диапазона. Маскирование произойдет во ViewModel.
+                            onSelectionEnd()
                         },
                         onDragCancel = { onClearSelection() }
                     )

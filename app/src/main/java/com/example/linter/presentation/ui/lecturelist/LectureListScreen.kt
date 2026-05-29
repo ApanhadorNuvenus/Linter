@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -18,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -29,7 +31,7 @@ import com.example.linter.domain.model.Lecture
 @Composable
 fun LectureListScreen(
     onNavigateToCreate: () -> Unit,
-    onNavigateToReview: (String) -> Unit, // Изменен тип: передаем язык во время перехода
+    onNavigateToReview: (String) -> Unit,
     onLectureClick: (Long) -> Unit,
     viewModel: LectureListViewModel = viewModel()
 ) {
@@ -44,6 +46,10 @@ fun LectureListScreen(
     var showMlKit by remember { mutableStateOf(prefs.getBoolean("pref_show_ml_kit", true)) }
     var showOnnx by remember { mutableStateOf(prefs.getBoolean("pref_show_onnx", true)) }
     var showCloud by remember { mutableStateOf(prefs.getBoolean("pref_show_cloud", true)) }
+
+    // НОВОЕ: Стейты для тумблера маскирования и диалога с информацией
+    var showMasking by remember { mutableStateOf(prefs.getBoolean("pref_enable_masking", true)) }
+    var showMaskingInfoDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.loadLectures()
@@ -97,6 +103,33 @@ fun LectureListScreen(
                         Switch(checked = showCloud, onCheckedChange = {
                             showCloud = it
                             prefs.edit().putBoolean("pref_show_cloud", it).apply()
+                        })
+                    }
+
+                    // НОВОЕ: Настройка маскирования в повторениях с иконкой справки
+                    Spacer(modifier = Modifier.height(8.dp))
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Маскирование в повторениях")
+                            Spacer(modifier = Modifier.width(4.dp))
+                            IconButton(
+                                onClick = { showMaskingInfoDialog = true },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Info,
+                                    contentDescription = "О маскировании",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                        Switch(checked = showMasking, onCheckedChange = {
+                            showMasking = it
+                            prefs.edit().putBoolean("pref_enable_masking", it).apply()
                         })
                     }
                 }
@@ -184,5 +217,75 @@ fun LectureListScreen(
                 }
             }
         }
+    }
+
+    // НОВОЕ: Диалог-справка с примером работы маскирования
+    if (showMaskingInfoDialog) {
+        AlertDialog(
+            onDismissRequest = { showMaskingInfoDialog = false },
+            title = { Text("Маскирование в повторениях", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = "Заменяет переводы изучаемых и тестируемых слов на ███ в переводах выделенных предложений, предотвращая случайные подсказки.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+
+                    HorizontalDivider()
+
+                    Text("Пример работы:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Оригинал: I will look after the dog.",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontStyle = FontStyle.Italic
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "❌ Без маскирования (с подсказкой):",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Text(
+                            text = "«Я присмотрю за собакой.»",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "✅ С маскированием (безопасно):",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF4CAF50)
+                        )
+                        Text(
+                            text = "«Я ███ за собакой.»",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Важно: маскированный перевод упирается в качество перевода и может быть иногда бесполезен",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontStyle = FontStyle.Italic
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showMaskingInfoDialog = false }) {
+                    Text("Понятно")
+                }
+            }
+        )
     }
 }

@@ -1,5 +1,6 @@
 package com.example.linter.presentation.ui.review
 
+import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -261,20 +262,12 @@ class ReviewViewModel(
         val currentItem = state.currentItem ?: return
         val normalized = word.trim().lowercase()
 
-        if (normalized == currentItem.word.lowercase()) return
-
-        val wordsToCheck = if (normalized.contains(" ")) {
-            normalized.split(Regex("\\s+")).map { it.replace(Regex("[^\\p{L}']"), "") }
-        } else {
-            listOf(normalized)
+        // Блокируем перевод при одиночном тапе на тестируемое или жёлтое слово, предотвращая подглядывание
+        if (!normalized.contains(" ")) {
+            if (normalized == currentItem.word.lowercase()) return
+            val status = currentItem.wordMeta[normalized]?.status
+            if (status == UiWordStatus.YELLOW) return
         }
-
-        // ИСПРАВЛЕНИЕ: Блокируем перевод ТОЛЬКО если во фразе есть хотя бы одно изучаемое (YELLOW) слово
-        val hasStudying = wordsToCheck.any { w ->
-            currentItem.wordMeta[w]?.status == UiWordStatus.YELLOW
-        }
-
-        if (hasStudying) return
 
         translationJob?.cancel()
         translationJob = viewModelScope.launch {
@@ -285,10 +278,27 @@ class ReviewViewModel(
             }
 
             if (meta.status == UiWordStatus.BLUE || meta.status == UiWordStatus.TRANSPARENT) {
+                // Асинхронно собираем поток перевода фразы/предложения
                 vocabularyRepository.fetchMultiTranslations(word, selectedLanguage)
                     .collect { progressiveTrans ->
+                        // Считываем пользовательскую настройку маскирования из SharedPreferences
+                        val prefs = AppModule.context.getSharedPreferences("linter_settings", Context.MODE_PRIVATE)
+                        val enableMasking = prefs.getBoolean("pref_enable_masking", true)
+
+                        // ИСПРАВЛЕНИЕ: Маскируем переводы жёлтых слов и тестируемого слова ТОЛЬКО если маскирование включено
+                        val maskedTrans = if (enableMasking) {
+                            MultiTranslation(
+                                mlKit = maskTranslationText(progressiveTrans.mlKit, currentItem),
+                                onnx = maskTranslationText(progressiveTrans.onnx, currentItem),
+                                cloud = maskTranslationText(progressiveTrans.cloud, currentItem),
+                                custom = maskTranslationText(progressiveTrans.custom, currentItem)
+                            )
+                        } else {
+                            progressiveTrans
+                        }
+
                         _uiState.value = state.copy(
-                            popupState = PopupState.NewWord(word, progressiveTrans, currentItem.contextSentence)
+                            popupState = PopupState.NewWord(word, maskedTrans, currentItem.contextSentence)
                         )
                     }
             } else {
@@ -297,17 +307,81 @@ class ReviewViewModel(
         }
     }
 
-    // НОВОЕ: Динамическое добавление созданной карточки в текущую сессию РП
+    // ИСПРАВЛЕНИЕ: Метод нечеткого стемминга и маскирования изучаемых слов и тестируемого слова
+    private fun maskTranslationText(text: String?, currentItem: ReviewItem): String? {
+        if (text == null) return null
+        val result = text
+
+        // Находим все слова предложения, которые имеют статус YELLOW (изучаемые)
+        val yellowWords = currentItem.wordMeta.filter { it.value.status == UiWordStatus.YELLOW }.keys
+        val translationsToMask = mutableListOf<String>()
+
+        // Сбор переводов жёлтых слов
+        for (yw in yellowWords) {
+            val meta = currentItem.wordMeta[yw] ?: continue
+            meta.translations?.let { trans ->
+                trans.custom?.let { translationsToMask.add(it) }
+                trans.mlKit?.let { translationsToMask.add(it) }
+                trans.onnx?.let { translationsToMask.add(it) }
+                trans.cloud?.let { translationsToMask.add(it) }
+            }
+            translationsToMask.add(yw) // На всякий случай добавляем оригинал слова
+        }
+
+        // Обязательно добавляем само тестируемое слово карточки и его переводы
+        val targetWord = currentItem.word.lowercase()
+        currentItem.translations.let { trans ->
+            trans.custom?.let { translationsToMask.add(it) }
+            trans.mlKit?.let { translationsToMask.add(it) }
+            trans.onnx?.let { translationsToMask.add(it) }
+            trans.cloud?.let { translationsToMask.add(it) }
+        }
+        translationsToMask.add(targetWord)
+
+        // Нормализуем цели маскирования (убираем лишние знаки и приводим к нижнему регистру)
+        val cleanTargets = translationsToMask
+            .map { it.trim().lowercase().replace(Regex("[^\\p{L}\\d]"), "") }
+            .filter { it.length >= 2 }
+            .distinct()
+
+        if (cleanTargets.isEmpty()) return result
+
+        // Разбиваем предложение на токены, сохраняя пунктуацию и пробелы
+        val tokensInResult = result.split(Regex("(?<=[\\s\\p{Punct}])|(?=[\\s\\p{Punct}])"))
+        val maskedTokens = tokensInResult.map { token ->
+            val cleanWord = token.lowercase().replace(Regex("[^\\p{L}\\d]"), "")
+            if (cleanWord.isEmpty()) return@map token
+
+            var shouldMask = false
+            for (target in cleanTargets) {
+                if (cleanWord == target) {
+                    shouldMask = true
+                    break
+                }
+                // Нечеткий стемминг (Fuzzy Root Match): если совпадает корень длиной от 4 символов
+                val minLen = minOf(cleanWord.length, target.length)
+                if (minLen >= 4) {
+                    val commonPrefixLength = cleanWord.zip(target).takeWhile { it.first == it.second }.size
+                    if (commonPrefixLength >= 4 || (commonPrefixLength.toFloat() / target.length.toFloat()) >= 0.7f) {
+                        shouldMask = true
+                        break
+                    }
+                }
+            }
+            if (shouldMask) "███" else token
+        }
+
+        return maskedTokens.joinToString("")
+    }
+
     private suspend fun addReviewItemToQueue(contextCardId: Long) {
         val state = _uiState.value
         val newItem = reviewRepository.getReviewItemByContextCardId(contextCardId) ?: return
 
-        // Избегаем дубликатов, если карточка уже добавлена
         if (state.queue.any { it.contextCardId == contextCardId }) return
 
         val updatedQueue = state.queue.toMutableList()
 
-        // Вставляем сразу следующей картой (индекс 1), либо первой, если очередь была пуста
         if (state.currentItem == null) {
             updatedQueue.add(newItem)
         } else {
@@ -330,7 +404,6 @@ class ReviewViewModel(
 
     fun onStartLearning(word: String, translations: MultiTranslation, contextSentence: String) {
         viewModelScope.launch {
-            // ИСПРАВЛЕНИЕ: Получаем ID созданной контекстной карты и сразу добавляем ее в РП
             val newContextCardId = vocabularyRepository.createLearningCard(word, 0L, 0L, contextSentence, translations, LearningStatus.NEW)
             addReviewItemToQueue(newContextCardId)
             refreshCurrentCard()
@@ -368,7 +441,6 @@ class ReviewViewModel(
     fun onChangeLearningStatus(cardId: Long, word: String, newStatus: LearningStatus) {
         viewModelScope.launch {
             vocabularyRepository.updateCardStatus(cardId, newStatus)
-            // ИСПРАВЛЕНИЕ: Если статус изменен на активное обучение прямо в РП, динамически внедряем ее в очередь
             addReviewItemToQueue(cardId)
             refreshCurrentCard()
             dismissPopup()
