@@ -1,10 +1,12 @@
 package com.example.linter.presentation.ui.youtube
 
+import android.content.Context
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -13,6 +15,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
@@ -20,15 +24,19 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -42,8 +50,6 @@ import com.example.linter.domain.model.TranslationMode
 import com.example.linter.domain.model.UiWordStatus
 import com.example.linter.presentation.ui.components.WordPopup
 import com.example.linter.presentation.ui.lecturedetail.PopupState
-import com.example.linter.ui.theme.BlueWordDark
-import com.example.linter.ui.theme.BlueWordLight
 import com.example.linter.ui.theme.YellowWordDark
 import com.example.linter.ui.theme.YellowWordLight
 import kotlinx.coroutines.launch
@@ -64,6 +70,9 @@ fun YoutubeDetailScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
 
+    val youtubePrefs = remember { context.getSharedPreferences("youtube_prefs", Context.MODE_PRIVATE) }
+    var isLargeSize by remember { mutableStateOf(youtubePrefs.getBoolean("pref_large_subtitles", false)) }
+
     LaunchedEffect(videoId) { viewModel.initVideo(videoId, exoPlayer) }
     DisposableEffect(Unit) { onDispose { viewModel.releasePlayer() } }
 
@@ -75,9 +84,20 @@ fun YoutubeDetailScreen(
 
     val listState = rememberLazyListState()
 
+    // Плотность пикселей экрана для точного оффсета скролла
+    val density = LocalDensity.current
+
+    val autoScrollOffsetPx = remember(density) { with(density) { 105.dp.roundToPx() } }
+
+    // Скроллим прямо к активному блоку с отрицательным оффсетом
     LaunchedEffect(state.currentBlockIndex) {
         if (state.currentBlockIndex >= 0 && !listState.isScrollInProgress) {
-            coroutineScope.launch { listState.animateScrollToItem(state.currentBlockIndex) }
+            coroutineScope.launch {
+                listState.animateScrollToItem(
+                    index = state.currentBlockIndex,
+                    scrollOffset = -autoScrollOffsetPx
+                )
+            }
         }
     }
 
@@ -204,29 +224,117 @@ fun YoutubeDetailScreen(
                     }
                 }
 
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 16.dp)
-                ) {
-                    itemsIndexed(
-                        items = state.subtitles,
-                        key = { _, block -> block.id }
-                    ) { index, block ->
-                        val isActive = index == state.currentBlockIndex
+                // Интерактивный контейнер субтитров
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        // Глобальный перехват двухпальцевого тапа на проходе Initial (до детей)
+                        .pointerInput(Unit) {
+                            awaitEachGesture {
+                                var isMultiTouch = false
+                                awaitFirstDown(pass = PointerEventPass.Initial)
+                                do {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    val activePointers = event.changes.filter { it.pressed }
+                                    if (activePointers.size >= 2) {
+                                        isMultiTouch = true
+                                        event.changes.forEach { it.consume() }
+                                    }
+                                } while (event.changes.any { it.pressed })
 
-                        SubtitleRowCard(
-                            isActive = isActive,
-                            block = block,
-                            state = state,
-                            onClick = {
-                                exoPlayer.seekTo(block.startTimeMs)
-                                exoPlayer.play()
+                                if (isMultiTouch) {
+                                    if (exoPlayer.isPlaying) {
+                                        exoPlayer.pause()
+                                    } else {
+                                        exoPlayer.play()
+                                    }
+                                }
+                            }
+                        }
+                        // Одиночный тап по свободному фону списка на проходе Main
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onTap = {
+                                    if (exoPlayer.isPlaying) {
+                                        exoPlayer.pause()
+                                    } else {
+                                        exoPlayer.play()
+                                    }
+                                }
+                            )
+                        }
+                ) {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        // top = 120.dp под видео, bottom = 120.dp (88.dp высота панели + 32.dp свободный зазор над кнопками)
+                        contentPadding = PaddingValues(top = 120.dp, bottom = 120.dp)
+                    ) {
+                        itemsIndexed(
+                            items = state.subtitles,
+                            key = { _, block -> block.id }
+                        ) { index, block ->
+                            val isActive = index == state.currentBlockIndex
+
+                            // Темпоральный градиент контраста
+                            val computedAlpha = when {
+                                state.currentBlockIndex == -1 -> 1.0f
+                                index == state.currentBlockIndex -> 1.0f
+                                index == state.currentBlockIndex - 1 -> 0.65f
+                                index < state.currentBlockIndex - 1 -> 0.40f
+                                else -> 0.80f
+                            }
+
+                            SubtitleRowCard(
+                                isActive = isActive,
+                                block = block,
+                                state = state,
+                                isLargeSize = isLargeSize,
+                                computedAlpha = computedAlpha,
+                                onClick = {
+                                    if (isActive) {
+                                        if (state.isPlaying) {
+                                            exoPlayer.pause()
+                                        } else {
+                                            exoPlayer.play()
+                                        }
+                                    } else {
+                                        exoPlayer.seekTo(block.startTimeMs)
+                                        exoPlayer.play()
+                                    }
+                                },
+                                onWordSelected = { phrase ->
+                                    wasPlayingWhenClicked = state.isPlaying
+                                    exoPlayer.pause()
+                                    viewModel.onWordClicked(phrase, block.sourceText)
+                                },
+                                onTranslateWholeBlock = { wholeText ->
+                                    wasPlayingWhenClicked = state.isPlaying
+                                    exoPlayer.pause()
+                                    viewModel.onWordClicked(wholeText, block.sourceText)
+                                }
+                            )
+                        }
+                    }
+
+                    // Размещаем панель управления как флоат-плавающий оверлей на дне Box контейнера
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                    ) {
+                        PlaybackControlBar(
+                            isPlaying = state.isPlaying,
+                            onRewind = {
+                                val newPos = maxOf(0L, exoPlayer.currentPosition - 5000L)
+                                exoPlayer.seekTo(newPos)
                             },
-                            onWordSelected = { phrase ->
-                                wasPlayingWhenClicked = exoPlayer.isPlaying
-                                exoPlayer.pause()
-                                viewModel.onWordClicked(phrase, block.sourceText)
+                            onTogglePlay = {
+                                if (exoPlayer.isPlaying) {
+                                    exoPlayer.pause()
+                                } else {
+                                    exoPlayer.play()
+                                }
                             }
                         )
                     }
@@ -277,7 +385,32 @@ fun YoutubeDetailScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(24.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
+                    HorizontalDivider()
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                val newValue = !isLargeSize
+                                isLargeSize = newValue
+                                youtubePrefs.edit().putBoolean("pref_large_subtitles", newValue).apply()
+                            }
+                            .padding(vertical = 8.dp)
+                    ) {
+                        Text("Крупный размер субтитров (Large)", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                        Switch(
+                            checked = isLargeSize,
+                            onCheckedChange = { newValue ->
+                                isLargeSize = newValue
+                                youtubePrefs.edit().putBoolean("pref_large_subtitles", newValue).apply()
+                            }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
                     HorizontalDivider()
                     Spacer(modifier = Modifier.height(16.dp))
 
@@ -309,44 +442,67 @@ fun SubtitleRowCard(
     isActive: Boolean,
     block: com.example.linter.domain.model.SubtitleBlock,
     state: YoutubeDetailState,
+    isLargeSize: Boolean,
+    computedAlpha: Float,
     onClick: () -> Unit,
-    onWordSelected: (String) -> Unit
+    onWordSelected: (String) -> Unit,
+    onTranslateWholeBlock: (String) -> Unit
 ) {
     val darkTheme = androidx.compose.foundation.isSystemInDarkTheme()
 
+    // ИСПРАВЛЕНИЕ: Плавная анимация ослабленной фоновой подсветки текущего блока субтитров (световой фокус)
+    val targetColor = if (isActive) {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f) // В 2.5 раза бледнее и мягче, чем было исходно
+    } else {
+        Color.Transparent
+    }
     val cardBackground by animateColorAsState(
-        targetValue = if (isActive) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
+        targetValue = targetColor,
         label = "BgAnim"
     )
-    val cardElevation by animateDpAsState(
-        targetValue = if (isActive) 2.dp else 0.dp,
-        label = "ElevAnim"
-    )
 
-    // Состояния жеста выделения внутри конкретной карточки субтитров
+    val originalTextSize = if (isLargeSize) 22.sp else 18.sp
+    val originalLineHeight = if (isLargeSize) 28.sp else 24.sp
+    val translatedTextSize = if (isLargeSize) 18.sp else 14.sp
+    val translatedLineHeight = if (isLargeSize) 24.sp else 20.sp
+    val cardPadding = if (isLargeSize) 16.dp else 12.dp
+    val spacerHeight = if (isLargeSize) 6.dp else 4.dp
+
     var localSelectionRange by remember { mutableStateOf<IntRange?>(null) }
     var dragStartTokenIndex by remember { mutableStateOf(-1) }
     var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
 
+    val leftIndicatorColor = if (isActive) {
+        if (state.isPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+    } else {
+        Color.Transparent
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() },
+            .alpha(computedAlpha)
+            .pointerInput(block.id, isLargeSize) {
+                detectTapGestures(
+                    onTap = { onClick() },
+                    onDoubleTap = { onTranslateWholeBlock(block.sourceText) }
+                )
+            },
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = cardBackground),
-        elevation = CardDefaults.cardElevation(defaultElevation = cardElevation)
+        colors = CardDefaults.cardColors(containerColor = cardBackground), // Плавный нежный фоновый окрас
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)   // ИСПРАВЛЕНИЕ: Жёстко плоская карточка (без теней контура)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 12.dp, horizontal = 16.dp)
+                .padding(vertical = cardPadding, horizontal = 16.dp)
         ) {
             Box(
                 modifier = Modifier
                     .width(4.dp)
-                    .height(48.dp)
+                    .height(if (isLargeSize) 60.dp else 48.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(if (isActive) MaterialTheme.colorScheme.primary else Color.Transparent)
+                    .background(leftIndicatorColor)
             )
 
             Spacer(modifier = Modifier.width(12.dp))
@@ -356,8 +512,10 @@ fun SubtitleRowCard(
                 val annotatedText = buildAnnotatedString {
                     tokens.forEach { token ->
                         val meta = state.wordMeta[token.value.lowercase()]
+
+                        // Мягкий полупрозрачный серый для BLUE (новых) слов вместо фиолетового/синего
                         val bgColor = when (meta?.status) {
-                            UiWordStatus.BLUE -> if (darkTheme) BlueWordDark else BlueWordLight
+                            UiWordStatus.BLUE -> if (darkTheme) Color(0xFF334155).copy(alpha = 0.6f) else Color(0xFFE2E8F0)
                             UiWordStatus.YELLOW -> if (darkTheme) YellowWordDark else YellowWordLight
                             else -> Color.Transparent
                         }
@@ -371,7 +529,6 @@ fun SubtitleRowCard(
                         }
                     }
 
-                    // Окрашивание свайп-выделения словосочетаний
                     localSelectionRange?.let { range ->
                         val intersectStart = maxOf(range.first, 0)
                         val intersectEnd = minOf(range.last + 1, block.sourceText.length)
@@ -381,13 +538,12 @@ fun SubtitleRowCard(
                     }
                 }
 
-                // Интерактивный жест-выделяемый текст
                 Text(
                     text = annotatedText,
                     style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = 18.sp,
+                        fontSize = originalTextSize,
                         fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
-                        lineHeight = 24.sp,
+                        lineHeight = originalLineHeight,
                         textAlign = TextAlign.Center
                     ),
                     onTextLayout = { textLayoutResult = it },
@@ -400,8 +556,11 @@ fun SubtitleRowCard(
                                     val token = tokens.find { it.startIndex <= offset && it.endIndex > offset && it.isWord }
                                     if (token != null) {
                                         onWordSelected(token.value)
+                                    } else {
+                                        onClick()
                                     }
-                                }
+                                },
+                                onDoubleTap = { onTranslateWholeBlock(block.sourceText) }
                             )
                         }
                         .pointerInput(block.sourceText) {
@@ -440,9 +599,8 @@ fun SubtitleRowCard(
                         }
                 )
 
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(spacerHeight))
 
-                // Отображение перевода субтитра (Скрываем полностью, если выбран режим DISABLED)
                 if (state.translationMode != TranslationMode.DISABLED) {
                     val displayedTranslation = when (state.translationMode) {
                         TranslationMode.YOUTUBE_NATIVE -> block.translatedText ?: ""
@@ -454,11 +612,134 @@ fun SubtitleRowCard(
                     if (displayedTranslation.isNotBlank()) {
                         Text(
                             text = displayedTranslation,
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = translatedTextSize,
+                                lineHeight = translatedLineHeight
+                            ),
                             color = MaterialTheme.colorScheme.secondary,
-                            lineHeight = 20.sp,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Асимметричная эргономичная капсула управления с соотношением сторон 7 к 5
+@Composable
+fun PlaybackControlBar(
+    isPlaying: Boolean,
+    onRewind: () -> Unit,
+    onTogglePlay: () -> Unit
+) {
+    Surface(
+        tonalElevation = 6.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 12.dp),
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // ЛЕВАЯ ЗОНА (Вес 7): Назад на 5 секунд
+            Box(
+                modifier = Modifier
+                    .weight(7f)
+                    .fillMaxHeight()
+                    .clickable(onClick = onRewind),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ArrowBack,
+                        contentDescription = "Назад на 5 секунд",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "5s",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            // Тонкий нативный разделитель сегментов
+            Box(
+                modifier = Modifier
+                    .width(1.dp)
+                    .fillMaxHeight(0.5f)
+                    .background(MaterialTheme.colorScheme.outlineVariant)
+            )
+
+            // ПРАВАЯ ЗОНА (Вес 5): Кнопка ПУСК / ПАУЗА под правый большой палец
+            Box(
+                modifier = Modifier
+                    .weight(5f)
+                    .fillMaxHeight()
+                    .background(MaterialTheme.colorScheme.primaryContainer)
+                    .clickable(onClick = onTogglePlay),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    if (isPlaying) {
+                        // Отрисовка двух вертикальных палочек паузы
+                        Row(
+                            modifier = Modifier.size(18.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .width(4.dp)
+                                    .fillMaxHeight()
+                                    .clip(RoundedCornerShape(1.dp))
+                                    .background(MaterialTheme.colorScheme.onPrimaryContainer)
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .width(4.dp)
+                                    .fillMaxHeight()
+                                    .clip(RoundedCornerShape(1.dp))
+                                    .background(MaterialTheme.colorScheme.onPrimaryContainer)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "ПАУЗА",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 1.sp,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Запустить воспроизведение",
+                            modifier = Modifier.size(24.dp),
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "ПУСК",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 1.sp,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                     }
                 }
