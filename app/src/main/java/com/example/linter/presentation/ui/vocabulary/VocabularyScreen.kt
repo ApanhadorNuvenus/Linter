@@ -32,8 +32,6 @@ fun VocabularyScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
-    // Алгоритм фильтрации на стороне UI
-    // ИСПРАВЛЕНИЕ: 100% точный фильтр без эвристик, считывающий оригинальный язык карточки из БД
     val filteredWords = remember(uiState.words, uiState.wordMetas, uiState.searchQuery, uiState.selectedLanguage, uiState.selectedStatus) {
         uiState.words.filter { item ->
             val matchesSearch = item.text.contains(uiState.searchQuery, ignoreCase = true)
@@ -64,7 +62,6 @@ fun VocabularyScreen(
         Column(
             modifier = Modifier.padding(padding).fillMaxSize()
         ) {
-            // Строка поиска
             OutlinedTextField(
                 value = uiState.searchQuery,
                 onValueChange = { viewModel.onSearchQueryChanged(it) },
@@ -74,7 +71,6 @@ fun VocabularyScreen(
                 shape = RoundedCornerShape(12.dp)
             )
 
-            // Ряд фильтров в виде чипсов
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -82,7 +78,6 @@ fun VocabularyScreen(
                     .padding(horizontal = 16.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Языковые чипсы
                 InputChip(
                     selected = uiState.selectedLanguage == "All",
                     onClick = { viewModel.onLanguageSelected("All") },
@@ -101,7 +96,6 @@ fun VocabularyScreen(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // Чипсы статуса СРС
                 InputChip(
                     selected = uiState.selectedStatus == "All",
                     onClick = { viewModel.onStatusSelected("All") },
@@ -127,7 +121,6 @@ fun VocabularyScreen(
                     Text("Слова не найдены по заданным фильтрам", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
                 }
             } else {
-                // Лента слов словаря
                 LazyColumn(
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
@@ -157,7 +150,6 @@ fun VocabularyScreen(
                                     Text(translation, style = MaterialTheme.typography.bodyMedium, color = Color.Gray, maxLines = 1)
                                 }
 
-                                // Метка уровня изучения
                                 meta?.learningStatus?.let { status ->
                                     Box(
                                         modifier = Modifier
@@ -182,6 +174,7 @@ fun VocabularyScreen(
                 onMarkAsKnown = { word, cardId -> viewModel.onMarkAsKnown(word, cardId) },
                 onMarkAsIgnored = { _ -> },
                 onChangeLearningStatus = { cardId, word, status -> viewModel.onChangeLearningStatus(cardId, word, status) },
+                onPlayTts = { word -> viewModel.playTts(word) }, // НОВОЕ
                 onDismiss = { viewModel.dismissPopup() },
                 onSaveCustomTranslation = { cardId, word, translation ->
                     viewModel.onSaveCustomTranslation(cardId, word, translation)

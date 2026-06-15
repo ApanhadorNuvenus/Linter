@@ -7,9 +7,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState // Добавлен импорт
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll       // Добавлен импорт
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
@@ -120,17 +120,32 @@ fun WordPopup(
     onMarkAsKnown: (word: String, cardId: Long?) -> Unit,
     onMarkAsIgnored: (word: String) -> Unit,
     onChangeLearningStatus: (cardId: Long, word: String, status: LearningStatus) -> Unit,
+    onPlayTts: (String) -> Unit,
     onDismiss: () -> Unit,
     onSaveCustomTranslation: (cardId: Long, word: String, translation: String) -> Unit = { _, _, _ -> }
 ) {
     if (state is PopupState.Hidden) return
 
+    val prefs = LocalContext.current.getSharedPreferences("linter_settings", Context.MODE_PRIVATE)
+
     var isEditingCustom by remember { mutableStateOf(false) }
     var customInput by remember { mutableStateOf("") }
 
-    LaunchedEffect(state) {
+    val title = when (state) {
+        is PopupState.NewWord -> state.wordOrPhrase
+        is PopupState.LearningWord -> state.wordOrPhrase
+        else -> ""
+    }
+
+    // ИСПРАВЛЕНИЕ: Запускаем эффект только при смене слова (title), а не при потоковом обновлении переводов.
+    // Это гарантирует ровно ОДНО воспроизведение звука, как только отрисовалось окно для нового слова.
+    LaunchedEffect(title) {
         isEditingCustom = false
         customInput = ""
+
+        if (title.isNotBlank() && prefs.getBoolean("pref_auto_tts", true)) {
+            onPlayTts(title)
+        }
     }
 
     val trimmedContextResult = remember(state) {
@@ -171,12 +186,6 @@ fun WordPopup(
         }
     }
 
-    // ИСПРАВЛЕНИЕ: Автоматически уменьшаем шрифт заголовка, если выделена длинная фраза
-    val title = when (state) {
-        is PopupState.NewWord -> state.wordOrPhrase
-        is PopupState.LearningWord -> state.wordOrPhrase
-        else -> ""
-    }
     val titleWordCount = remember(title) { title.split(Regex("\\s+")).filter { it.isNotEmpty() }.size }
     val titleStyle = if (titleWordCount > 4) {
         MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, lineHeight = 26.sp)
@@ -197,22 +206,29 @@ fun WordPopup(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
         ) {
-            // ИСПРАВЛЕНИЕ: Добавлен вертикальный скролл (.verticalScroll), чтобы контент никогда не обрезался
             Column(
                 modifier = Modifier
                     .padding(24.dp)
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
             ) {
-                Text(
-                    text = title,
-                    style = titleStyle,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = title,
+                        style = titleStyle,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = { onPlayTts(title) }) {
+                        Text("🔊", fontSize = 24.sp)
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Контент
                 when (state) {
                     is PopupState.NewWord -> {
                         if (isEditingCustom) {
@@ -301,7 +317,6 @@ fun WordPopup(
                         if (!state.meta.hasFlashCard) {
                             Button(
                                 onClick = {
-                                    // Клик воссоздает FlashCard в БД и возвращает слово в СРС-повторения
                                     onChangeLearningStatus(
                                         state.meta.contextCardId!!,
                                         state.wordOrPhrase,

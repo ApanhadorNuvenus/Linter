@@ -16,8 +16,8 @@ data class VocabularyUiState(
     val words: List<com.example.linter.data.local.entity.VocabularyItemEntity> = emptyList(),
     val wordMetas: Map<String, WordMeta> = emptyMap(),
     val searchQuery: String = "",
-    val selectedLanguage: String = "All", // "All", "en", "fr"
-    val selectedStatus: String = "All",   // "All", "NEW", "RECOGNIZED", "FAMILIAR", "LEARNED"
+    val selectedLanguage: String = "All",
+    val selectedStatus: String = "All",
     val isLoading: Boolean = true,
     val popupState: PopupState = PopupState.Hidden
 )
@@ -66,14 +66,25 @@ class VocabularyViewModel : ViewModel() {
 
     fun onWordClicked(word: String) {
         val meta = _uiState.value.wordMetas[word.lowercase()] ?: return
-
-        // Находим контекстное предложение для отображения в попапе
         val activeCard = cardBox.all.find { it.vocabularyItemId > 0L && vocabBox[it.vocabularyItemId]?.text == word }
         val sentence = activeCard?.contextSentence ?: "Контекстное предложение отсутствует"
 
         _uiState.value = _uiState.value.copy(
             popupState = PopupState.LearningWord(word, meta, sentence)
         )
+    }
+
+    // ИСПРАВЛЕНИЕ: Вызывается напрямую из UI
+    fun playTts(word: String) {
+        val meta = _uiState.value.wordMetas[word.lowercase()]
+        val lang = meta?.language ?: "en"
+        AppModule.ttsRepository.speak(word, lang)
+    }
+
+    fun dismissPopup() {
+        translationJob?.cancel()
+        AppModule.ttsRepository.stop()
+        _uiState.value = _uiState.value.copy(popupState = PopupState.Hidden)
     }
 
     fun onSaveCustomTranslation(cardId: Long, word: String, customTranslation: String) {
@@ -106,10 +117,5 @@ class VocabularyViewModel : ViewModel() {
             updatedMetas[word.lowercase()] = newMeta
         }
         _uiState.value = _uiState.value.copy(wordMetas = updatedMetas)
-    }
-
-    fun dismissPopup() {
-        translationJob?.cancel()
-        _uiState.value = _uiState.value.copy(popupState = PopupState.Hidden)
     }
 }

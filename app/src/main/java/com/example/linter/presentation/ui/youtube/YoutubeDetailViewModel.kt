@@ -32,7 +32,6 @@ data class YoutubeDetailState(
 
     val subtitles: List<SubtitleBlock> = emptyList(),
     val currentBlockIndex: Int = -1,
-    // НОВОЕ: Стейт активности плеера
     val isPlaying: Boolean = false,
 
     val tokenizedBlocks: Map<Long, List<Token>> = emptyMap(),
@@ -172,7 +171,6 @@ class YoutubeDetailViewModel : ViewModel() {
         syncJob = viewModelScope.launch {
             while (true) {
                 val currentPos = exoPlayer?.currentPosition ?: 0L
-                // ИСПРАВЛЕНИЕ: синхронизация стейта воспроизведения плеера (isPlaying)
                 val isPlaying = exoPlayer?.isPlaying ?: false
                 val blocks = _uiState.value.subtitles
                 val activeIndex = blocks.indexOfFirst { currentPos in it.startTimeMs..it.endTimeMs }
@@ -275,8 +273,14 @@ class YoutubeDetailViewModel : ViewModel() {
         }
     }
 
+    // ИСПРАВЛЕНИЕ: Вызывается напрямую из UI
+    fun playTts(word: String) {
+        AppModule.ttsRepository.speak(word, _uiState.value.sourceLang)
+    }
+
     fun dismissPopup() {
         translationJob?.cancel()
+        AppModule.ttsRepository.stop()
         _uiState.value = _uiState.value.copy(popupState = PopupState.Hidden)
     }
 

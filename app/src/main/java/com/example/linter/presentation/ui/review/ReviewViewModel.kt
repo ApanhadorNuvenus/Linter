@@ -1,6 +1,5 @@
 package com.example.linter.presentation.ui.review
 
-import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -262,7 +261,6 @@ class ReviewViewModel(
         val currentItem = state.currentItem ?: return
         val normalized = word.trim().lowercase()
 
-        // Блокируем перевод при одиночном тапе на тестируемое или жёлтое слово, предотвращая подглядывание
         if (!normalized.contains(" ")) {
             if (normalized == currentItem.word.lowercase()) return
             val status = currentItem.wordMeta[normalized]?.status
@@ -278,14 +276,12 @@ class ReviewViewModel(
             }
 
             if (meta.status == UiWordStatus.BLUE || meta.status == UiWordStatus.TRANSPARENT) {
-                // Асинхронно собираем поток перевода фразы/предложения
                 vocabularyRepository.fetchMultiTranslations(word, selectedLanguage)
                     .collect { progressiveTrans ->
-                        // Считываем пользовательскую настройку маскирования из SharedPreferences
-                        val prefs = AppModule.context.getSharedPreferences("linter_settings", Context.MODE_PRIVATE)
+                        // Настройки маскирования читаются на лету
+                        val prefs = AppModule.context.getSharedPreferences("linter_settings", android.content.Context.MODE_PRIVATE)
                         val enableMasking = prefs.getBoolean("pref_enable_masking", true)
 
-                        // ИСПРАВЛЕНИЕ: Маскируем переводы жёлтых слов и тестируемого слова ТОЛЬКО если маскирование включено
                         val maskedTrans = if (enableMasking) {
                             MultiTranslation(
                                 mlKit = maskTranslationText(progressiveTrans.mlKit, currentItem),
@@ -307,16 +303,18 @@ class ReviewViewModel(
         }
     }
 
-    // ИСПРАВЛЕНИЕ: Метод нечеткого стемминга и маскирования изучаемых слов и тестируемого слова
+    // ИСПРАВЛЕНИЕ: Вызывается напрямую из UI
+    fun playTts(word: String) {
+        AppModule.ttsRepository.speak(word, selectedLanguage)
+    }
+
     private fun maskTranslationText(text: String?, currentItem: ReviewItem): String? {
         if (text == null) return null
         val result = text
 
-        // Находим все слова предложения, которые имеют статус YELLOW (изучаемые)
         val yellowWords = currentItem.wordMeta.filter { it.value.status == UiWordStatus.YELLOW }.keys
         val translationsToMask = mutableListOf<String>()
 
-        // Сбор переводов жёлтых слов
         for (yw in yellowWords) {
             val meta = currentItem.wordMeta[yw] ?: continue
             meta.translations?.let { trans ->
@@ -325,10 +323,9 @@ class ReviewViewModel(
                 trans.onnx?.let { translationsToMask.add(it) }
                 trans.cloud?.let { translationsToMask.add(it) }
             }
-            translationsToMask.add(yw) // На всякий случай добавляем оригинал слова
+            translationsToMask.add(yw)
         }
 
-        // Обязательно добавляем само тестируемое слово карточки и его переводы
         val targetWord = currentItem.word.lowercase()
         currentItem.translations.let { trans ->
             trans.custom?.let { translationsToMask.add(it) }
@@ -338,7 +335,6 @@ class ReviewViewModel(
         }
         translationsToMask.add(targetWord)
 
-        // Нормализуем цели маскирования (убираем лишние знаки и приводим к нижнему регистру)
         val cleanTargets = translationsToMask
             .map { it.trim().lowercase().replace(Regex("[^\\p{L}\\d]"), "") }
             .filter { it.length >= 2 }
@@ -346,7 +342,6 @@ class ReviewViewModel(
 
         if (cleanTargets.isEmpty()) return result
 
-        // Разбиваем предложение на токены, сохраняя пунктуацию и пробелы
         val tokensInResult = result.split(Regex("(?<=[\\s\\p{Punct}])|(?=[\\s\\p{Punct}])"))
         val maskedTokens = tokensInResult.map { token ->
             val cleanWord = token.lowercase().replace(Regex("[^\\p{L}\\d]"), "")
@@ -358,7 +353,6 @@ class ReviewViewModel(
                     shouldMask = true
                     break
                 }
-                // Нечеткий стемминг (Fuzzy Root Match): если совпадает корень длиной от 4 символов
                 val minLen = minOf(cleanWord.length, target.length)
                 if (minLen >= 4) {
                     val commonPrefixLength = cleanWord.zip(target).takeWhile { it.first == it.second }.size
@@ -476,6 +470,7 @@ class ReviewViewModel(
 
     fun dismissPopup() {
         translationJob?.cancel()
+        AppModule.ttsRepository.stop()
         _uiState.value = _uiState.value.copy(popupState = PopupState.Hidden, selectionRange = null)
     }
 }

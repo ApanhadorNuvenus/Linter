@@ -8,7 +8,7 @@ import com.example.linter.domain.model.LearningStatus
 import com.example.linter.domain.model.Token
 import com.example.linter.domain.model.UiWordStatus
 import com.example.linter.domain.model.WordMeta
-import com.example.linter.domain.model.MultiTranslation // НОВОЕ
+import com.example.linter.domain.model.MultiTranslation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,7 +25,6 @@ sealed class PageAction {
 
 sealed class PopupState {
     object Hidden : PopupState()
-    // ИЗМЕНЕНИЕ: Теперь здесь передается MultiTranslation
     data class NewWord(val wordOrPhrase: String, val translations: MultiTranslation, val contextSentence: String) : PopupState()
     data class LearningWord(val wordOrPhrase: String, val meta: WordMeta, val contextSentence: String) : PopupState()
 }
@@ -63,7 +62,6 @@ class LectureDetailViewModel : ViewModel() {
         viewModelScope.launch {
             val lecture = lectureRepository.getLectureById(lectureId) ?: return@launch
 
-            // ИСПРАВЛЕНИЕ: Запускаем прогрев параллельно. Основной поток не ждет его окончания.
             launch {
                 AppModule.onnxTranslator.warmUp(lecture.language)
             }
@@ -72,7 +70,6 @@ class LectureDetailViewModel : ViewModel() {
             val words = tokens.filter { it.isWord }.map { it.value.lowercase() }.distinct()
             val meta = vocabularyRepository.getWordMetas(words)
 
-            // Лекция откроется мгновенно (за миллисекунды)
             _uiState.value = _uiState.value.copy(
                 lectureId = lectureId,
                 title = lecture.title,
@@ -166,7 +163,6 @@ class LectureDetailViewModel : ViewModel() {
             }
 
             if (meta.status == UiWordStatus.BLUE || meta.status == UiWordStatus.TRANSPARENT) {
-                // Асинхронно собираем поток переводов и обновляем карточку в реальном времени
                 vocabularyRepository.fetchMultiTranslations(wordOrPhrase, state.language)
                     .collect { progressiveTrans ->
                         _uiState.value = _uiState.value.copy(
@@ -179,12 +175,17 @@ class LectureDetailViewModel : ViewModel() {
         }
     }
 
+    // ИСПРАВЛЕНИЕ: Вызывается напрямую из UI
+    fun playTts(word: String) {
+        AppModule.ttsRepository.speak(word, _uiState.value.language)
+    }
+
     fun dismissPopup() {
-        translationJob?.cancel() // Отменяем сбор при закрытии
+        translationJob?.cancel()
+        AppModule.ttsRepository.stop()
         _uiState.value = _uiState.value.copy(popupState = PopupState.Hidden, selectionRange = null)
     }
 
-    // ИЗМЕНЕНИЕ: Принимаем MultiTranslation
     fun onStartLearning(word: String, translations: MultiTranslation, contextSentence: String) {
         val state = _uiState.value
         viewModelScope.launch {
@@ -199,7 +200,6 @@ class LectureDetailViewModel : ViewModel() {
             if (contextCardId != null) {
                 vocabularyRepository.moveCardToKnown(contextCardId, word)
             } else {
-                // Извлекаем переводы и контекст из открытого попапа NewWord
                 val trans = (_uiState.value.popupState as? PopupState.NewWord)?.translations
                 val context = (_uiState.value.popupState as? PopupState.NewWord)?.contextSentence ?: ""
 
@@ -280,7 +280,6 @@ class LectureDetailViewModel : ViewModel() {
                     val token = state.tokens.find { it.value.lowercase() == word }
                     val context = if (token != null) extractSentence(state.text, token.startIndex) else ""
 
-                    // Оптимизация: .last() ожидает окончания работы всех запущенных переводчиков и выдает финальный перевод
                     val trans = vocabularyRepository.fetchMultiTranslations(word, state.language).last()
 
                     vocabularyRepository.createLearningCard(word, state.lectureId, 0L, context, trans, LearningStatus.NEW)

@@ -1,5 +1,6 @@
 package com.example.linter.presentation.ui.review
 
+import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -18,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
@@ -125,6 +127,7 @@ fun ReviewScreen(
                         onSelectionDrag = { offset -> viewModel.onSelectionDrag(offset) },
                         onSelectionEnd = { viewModel.onSelectionEnd() },
                         onClearSelection = { viewModel.clearSelection() },
+                        onPlayTts = { word -> viewModel.playTts(word) },
                         onSaveCustomTranslation = { cardId, word, translation ->
                             viewModel.onSaveCustomTranslation(cardId, word, translation)
                         }
@@ -140,6 +143,7 @@ fun ReviewScreen(
                 onMarkAsKnown = { word, cardId -> viewModel.onMarkAsKnown(word, cardId) },
                 onMarkAsIgnored = { word -> viewModel.onMarkAsIgnored(word) },
                 onChangeLearningStatus = { cardId, word, status -> viewModel.onChangeLearningStatus(cardId, word, status) },
+                onPlayTts = { word -> viewModel.playTts(word) },
                 onDismiss = { viewModel.dismissPopup() },
                 onSaveCustomTranslation = { cardId, word, translation ->
                     viewModel.onSaveCustomTranslation(cardId, word, translation)
@@ -161,8 +165,18 @@ fun ReviewCard(
     onSelectionDrag: (Int) -> Unit,
     onSelectionEnd: () -> Unit,
     onClearSelection: () -> Unit,
+    onPlayTts: (String) -> Unit,
     onSaveCustomTranslation: (Long, String, String) -> Unit
 ) {
+    val prefs = LocalContext.current.getSharedPreferences("linter_settings", Context.MODE_PRIVATE)
+
+    // ИСПРАВЛЕНИЕ: Автоматически озвучиваем целевое слово ровно в тот момент, когда карточка переворачивается
+    LaunchedEffect(showAnswer, item.word) {
+        if (showAnswer && prefs.getBoolean("pref_auto_tts", true)) {
+            onPlayTts(item.word)
+        }
+    }
+
     val trimmedContextResult = remember(item.contextSentence, item.word) {
         getTrimmedContext(item.contextSentence, item.word, maxWordsAround = 4)
     }
@@ -182,7 +196,6 @@ fun ReviewCard(
         val annotatedContext = buildAnnotatedString {
             append(trimmedContextResult.text)
 
-            // Подсветка окружающих слов
             item.tokens.filter { it.isWord }.forEach { token ->
                 val meta = item.wordMeta[token.value.lowercase()]
                 val bgColor = getWordColor(meta?.status)
@@ -238,7 +251,6 @@ fun ReviewCard(
                                     val clickedToken = item.tokens.find { it.startIndex <= originalOffset && it.endIndex > originalOffset && it.isWord }
                                     val clickedWord = clickedToken?.value?.lowercase()
 
-                                    // Блокируем одиночный тап ТОЛЬКО на изучаемые слова (YELLOW). Синие (BLUE) теперь разрешены!
                                     val isStudying = clickedWord != null && item.wordMeta[clickedWord]?.status == UiWordStatus.YELLOW
 
                                     if (!isStudying) {
@@ -254,7 +266,6 @@ fun ReviewCard(
                         onDragStart = { pos ->
                             textLayoutResult?.getOffsetForPosition(pos)?.let { offset ->
                                 val originalOffset = offset + textShift
-                                // ИСПРАВЛЕНИЕ: Никаких блокировок при выделении предложения. Пользователь может начать свайп откуда угодно!
                                 onSelectionStart(originalOffset)
                             }
                         },
@@ -265,7 +276,6 @@ fun ReviewCard(
                             }
                         },
                         onDragEnd = {
-                            // ИСПРАВЛЕНИЕ: Разрешаем свободный перевод любого выделенного диапазона. Маскирование произойдет во ViewModel.
                             onSelectionEnd()
                         },
                         onDragCancel = { onClearSelection() }
@@ -274,7 +284,15 @@ fun ReviewCard(
         )
 
         Spacer(modifier = Modifier.height(32.dp))
-        Text(text = item.word, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Black)
+
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+            Text(text = item.word, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Black)
+            Spacer(modifier = Modifier.width(8.dp))
+            IconButton(onClick = { onPlayTts(item.word) }) {
+                Text("🔊", fontSize = 28.sp)
+            }
+        }
+
         Spacer(modifier = Modifier.height(32.dp))
 
         if (showAnswer) {

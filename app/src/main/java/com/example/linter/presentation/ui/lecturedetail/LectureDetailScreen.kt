@@ -61,7 +61,6 @@ fun LectureDetailScreen(
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
                 )
-                // Тонкий индикатор общего прогресса чтения под шапкой
                 if (pageRanges.isNotEmpty()) {
                     val progress = (pagerState.currentPage + 1).toFloat() / pageRanges.size.toFloat()
                     LinearProgressIndicator(
@@ -85,7 +84,6 @@ fun LectureDetailScreen(
                     CircularProgressIndicator(strokeWidth = 3.dp)
                 }
             } else {
-                // Основной текстовый блок
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -108,7 +106,6 @@ fun LectureDetailScreen(
                     )
                 }
 
-                // Нижний блок управления чтением
                 Surface(
                     tonalElevation = 1.dp,
                     modifier = Modifier.fillMaxWidth()
@@ -132,7 +129,6 @@ fun LectureDetailScreen(
                             Text("Prev")
                         }
 
-                        // Индикация номера страницы
                         if (pageRanges.isNotEmpty()) {
                             Text(
                                 text = "${pagerState.currentPage + 1} of ${pageRanges.size}",
@@ -159,7 +155,6 @@ fun LectureDetailScreen(
             }
         }
 
-        // Попап слова
         if (uiState.popupState !is PopupState.Hidden) {
             WordPopup(
                 state = uiState.popupState,
@@ -167,12 +162,12 @@ fun LectureDetailScreen(
                 onMarkAsKnown = { word, cardId -> viewModel.onMarkAsKnown(word, cardId) },
                 onMarkAsIgnored = { word -> viewModel.onMarkAsIgnored(word) },
                 onChangeLearningStatus = { cardId, word, status -> viewModel.onChangeLearningStatus(cardId, word, status) },
+                onPlayTts = { word -> viewModel.playTts(word) }, // НОВОЕ
                 onDismiss = { viewModel.dismissPopup() },
                 onSaveCustomTranslation = { cardId, word, translation -> viewModel.onSaveCustomTranslation(cardId, word, translation) }
             )
         }
 
-        // Диалог конца страницы
         if (uiState.showEndOfPageDialog) {
             EndOfPageDialog(
                 unknownWords = uiState.unknownWordsOnPage,

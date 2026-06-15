@@ -25,6 +25,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.linter.di.AppModule
 import com.example.linter.domain.model.Lecture
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -47,9 +48,17 @@ fun LectureListScreen(
     var showOnnx by remember { mutableStateOf(prefs.getBoolean("pref_show_onnx", true)) }
     var showCloud by remember { mutableStateOf(prefs.getBoolean("pref_show_cloud", true)) }
 
-    // НОВОЕ: Стейты для тумблера маскирования и диалога с информацией
     var showMasking by remember { mutableStateOf(prefs.getBoolean("pref_enable_masking", true)) }
     var showMaskingInfoDialog by remember { mutableStateOf(false) }
+
+    // НОВОЕ: Настройки TTS
+    var autoTts by remember { mutableStateOf(prefs.getBoolean("pref_auto_tts", true)) }
+
+    val ttsRepo = AppModule.ttsRepository
+    val enAvailable = remember { ttsRepo.getAvailableEngines("en") }
+    val frAvailable = remember { ttsRepo.getAvailableEngines("fr") }
+    var enEngine by remember { mutableStateOf(ttsRepo.getEngine("en")) }
+    var frEngine by remember { mutableStateOf(ttsRepo.getEngine("fr")) }
 
     LaunchedEffect(Unit) {
         viewModel.loadLectures()
@@ -75,7 +84,6 @@ fun LectureListScreen(
             }
         }
 
-        // Шторка настроек
         AnimatedVisibility(visible = showSettingsCard) {
             ElevatedCard(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
@@ -106,7 +114,6 @@ fun LectureListScreen(
                         })
                     }
 
-                    // НОВОЕ: Настройка маскирования в повторениях с иконкой справки
                     Spacer(modifier = Modifier.height(8.dp))
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                     Spacer(modifier = Modifier.height(8.dp))
@@ -132,13 +139,60 @@ fun LectureListScreen(
                             prefs.edit().putBoolean("pref_enable_masking", it).apply()
                         })
                     }
+
+                    // НОВОЕ: Блок настроек TTS
+                    Spacer(modifier = Modifier.height(8.dp))
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text("Озвучка (TTS)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Автоматическое чтение слов", modifier = Modifier.weight(1f))
+                        Switch(checked = autoTts, onCheckedChange = {
+                            autoTts = it
+                            prefs.edit().putBoolean("pref_auto_tts", it).apply()
+                        })
+                    }
+
+                    if (enAvailable.size > 1) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("Движок озвучки (English)", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        enAvailable.forEach { engine ->
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable {
+                                enEngine = engine
+                                ttsRepo.setEngine("en", engine)
+                            }) {
+                                RadioButton(selected = enEngine == engine, onClick = {
+                                    enEngine = engine
+                                    ttsRepo.setEngine("en", engine)
+                                })
+                                Text(engine.title, fontSize = 14.sp)
+                            }
+                        }
+                    }
+
+                    if (frAvailable.size > 1) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("Движок озвучки (French)", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        frAvailable.forEach { engine ->
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable {
+                                frEngine = engine
+                                ttsRepo.setEngine("fr", engine)
+                            }) {
+                                RadioButton(selected = frEngine == engine, onClick = {
+                                    frEngine = engine
+                                    ttsRepo.setEngine("fr", engine)
+                                })
+                                Text(engine.title, fontSize = 14.sp)
+                            }
+                        }
+                    }
                 }
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // ИНТЕРАКТИВНЫЙ ДАШБОРД СРС-ПОВТОРЕНИЯ ПО ЯЗЫКАМ
         Text("Сессии повторения", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(8.dp))
 
@@ -154,7 +208,6 @@ fun LectureListScreen(
             }
         } else {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                // Карточка English
                 if (enDueCount > 0) {
                     Card(
                         modifier = Modifier.weight(1f).clickable { onNavigateToReview("en") },
@@ -169,7 +222,6 @@ fun LectureListScreen(
                         }
                     }
                 }
-                // Карточка French
                 if (frDueCount > 0) {
                     Card(
                         modifier = Modifier.weight(1f).clickable { onNavigateToReview("fr") },
@@ -219,7 +271,6 @@ fun LectureListScreen(
         }
     }
 
-    // НОВОЕ: Диалог-справка с примером работы маскирования
     if (showMaskingInfoDialog) {
         AlertDialog(
             onDismissRequest = { showMaskingInfoDialog = false },

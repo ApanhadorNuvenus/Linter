@@ -2,7 +2,6 @@ package com.example.linter.presentation.ui.youtube
 
 import android.content.Context
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -32,11 +31,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -83,13 +81,9 @@ fun YoutubeDetailScreen(
     var wasPlayingWhenClicked by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
-
-    // Плотность пикселей экрана для точного оффсета скролла
     val density = LocalDensity.current
-
     val autoScrollOffsetPx = remember(density) { with(density) { 105.dp.roundToPx() } }
 
-    // Скроллим прямо к активному блоку с отрицательным оффсетом
     LaunchedEffect(state.currentBlockIndex) {
         if (state.currentBlockIndex >= 0 && !listState.isScrollInProgress) {
             coroutineScope.launch {
@@ -224,12 +218,10 @@ fun YoutubeDetailScreen(
                     }
                 }
 
-                // Интерактивный контейнер субтитров
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        // Глобальный перехват двухпальцевого тапа на проходе Initial (до детей)
                         .pointerInput(Unit) {
                             awaitEachGesture {
                                 var isMultiTouch = false
@@ -252,7 +244,6 @@ fun YoutubeDetailScreen(
                                 }
                             }
                         }
-                        // Одиночный тап по свободному фону списка на проходе Main
                         .pointerInput(Unit) {
                             detectTapGestures(
                                 onTap = {
@@ -268,7 +259,6 @@ fun YoutubeDetailScreen(
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
-                        // top = 120.dp под видео, bottom = 120.dp (88.dp высота панели + 32.dp свободный зазор над кнопками)
                         contentPadding = PaddingValues(top = 120.dp, bottom = 120.dp)
                     ) {
                         itemsIndexed(
@@ -277,7 +267,6 @@ fun YoutubeDetailScreen(
                         ) { index, block ->
                             val isActive = index == state.currentBlockIndex
 
-                            // Темпоральный градиент контраста
                             val computedAlpha = when {
                                 state.currentBlockIndex == -1 -> 1.0f
                                 index == state.currentBlockIndex -> 1.0f
@@ -318,7 +307,6 @@ fun YoutubeDetailScreen(
                         }
                     }
 
-                    // Размещаем панель управления как флоат-плавающий оверлей на дне Box контейнера
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -349,6 +337,7 @@ fun YoutubeDetailScreen(
                 onMarkAsKnown = { word, cardId -> viewModel.onMarkAsKnown(word, cardId) },
                 onMarkAsIgnored = { word -> viewModel.onMarkAsIgnored(word) },
                 onChangeLearningStatus = { cardId, word, lStatus -> viewModel.onChangeLearningStatus(cardId, word, lStatus) },
+                onPlayTts = { word -> viewModel.playTts(word) }, // НОВОЕ
                 onDismiss = { viewModel.dismissPopup() },
                 onSaveCustomTranslation = { cardId, word, translation ->
                     viewModel.onSaveCustomTranslation(cardId, word, translation)
@@ -450,9 +439,8 @@ fun SubtitleRowCard(
 ) {
     val darkTheme = androidx.compose.foundation.isSystemInDarkTheme()
 
-    // ИСПРАВЛЕНИЕ: Плавная анимация ослабленной фоновой подсветки текущего блока субтитров (световой фокус)
     val targetColor = if (isActive) {
-        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f) // В 2.5 раза бледнее и мягче, чем было исходно
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
     } else {
         Color.Transparent
     }
@@ -489,8 +477,8 @@ fun SubtitleRowCard(
                 )
             },
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = cardBackground), // Плавный нежный фоновый окрас
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)   // ИСПРАВЛЕНИЕ: Жёстко плоская карточка (без теней контура)
+        colors = CardDefaults.cardColors(containerColor = cardBackground),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(
             modifier = Modifier
@@ -513,7 +501,6 @@ fun SubtitleRowCard(
                     tokens.forEach { token ->
                         val meta = state.wordMeta[token.value.lowercase()]
 
-                        // Мягкий полупрозрачный серый для BLUE (новых) слов вместо фиолетового/синего
                         val bgColor = when (meta?.status) {
                             UiWordStatus.BLUE -> if (darkTheme) Color(0xFF334155).copy(alpha = 0.6f) else Color(0xFFE2E8F0)
                             UiWordStatus.YELLOW -> if (darkTheme) YellowWordDark else YellowWordLight
@@ -627,7 +614,6 @@ fun SubtitleRowCard(
     }
 }
 
-// Асимметричная эргономичная капсула управления с соотношением сторон 7 к 5
 @Composable
 fun PlaybackControlBar(
     isPlaying: Boolean,
@@ -648,7 +634,6 @@ fun PlaybackControlBar(
                 .height(64.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // ЛЕВАЯ ЗОНА (Вес 7): Назад на 5 секунд
             Box(
                 modifier = Modifier
                     .weight(7f)
@@ -675,7 +660,6 @@ fun PlaybackControlBar(
                 }
             }
 
-            // Тонкий нативный разделитель сегментов
             Box(
                 modifier = Modifier
                     .width(1.dp)
@@ -683,7 +667,6 @@ fun PlaybackControlBar(
                     .background(MaterialTheme.colorScheme.outlineVariant)
             )
 
-            // ПРАВАЯ ЗОНА (Вес 5): Кнопка ПУСК / ПАУЗА под правый большой палец
             Box(
                 modifier = Modifier
                     .weight(5f)
@@ -697,7 +680,6 @@ fun PlaybackControlBar(
                     horizontalArrangement = Arrangement.Center
                 ) {
                     if (isPlaying) {
-                        // Отрисовка двух вертикальных палочек паузы
                         Row(
                             modifier = Modifier.size(18.dp),
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
