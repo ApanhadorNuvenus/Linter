@@ -17,12 +17,12 @@ class NewPipeDownloader private constructor() : Downloader() {
         connection.readTimeout = 30000
         connection.connectTimeout = 30000
 
-        // 1. Копируем заголовки от экстрактора NewPipe
+        // 1. Копируем заголовки, сформированные NewPipeExtractor
         request.headers().forEach { (key, values) ->
             connection.setRequestProperty(key, values.joinToString(","))
         }
 
-        // 2. Типичный Android User-Agent
+        // 2. Стабильный Android User-Agent
         connection.setRequestProperty(
             "User-Agent",
             "Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UP1A.231005.007) " +
@@ -30,27 +30,35 @@ class NewPipeDownloader private constructor() : Downloader() {
                     "Chrome/124.0.0.0 Mobile Safari/537.36"
         )
 
-        // 3. КРИТИЧНО: Принудительно запрашиваем ТОЛЬКО gzip!
-        // Если оставить дефолтный "gzip, deflate, br", YouTube пришлет Brotli,
-        // который встроенный коннектор Android не умеет распаковывать.
+        // 3. Запрашиваем gzip сжатие (позволяет избежать Brotli, который не поддерживается из коробки)
         connection.setRequestProperty("Accept-Encoding", "gzip")
 
-        // 4. КРИТИЧНО: Добавляем Cookie для обхода окна согласия (Consent Wall).
-        // Если ютуб отдает страницу согласия, парсер ломается на поиске visitorData.
+        // 4. ИСПРАВЛЕНИЕ: Обход Consent Wall Google/YouTube в ЕС (GDPR)
+        // Добавляем современные куки согласия, актуальные на 2025–2026 годы.
+        // SOCS=CAI сообщает YouTube, что настройки кук были подтверждены, предотвращая редирект.
         val existingCookie = connection.getRequestProperty("Cookie") ?: ""
+        val cookiesToAdd = mutableListOf<String>()
+
         if (!existingCookie.contains("CONSENT=")) {
-            val bypassCookie = "CONSENT=YES+cb.20210328-17-p0.en+FX+478"
+            cookiesToAdd.add("CONSENT=YES+cb.20230308-07-p0.en+FX+910")
+        }
+        if (!existingCookie.contains("SOCS=")) {
+            // CAI или CAISAiAD - стандартные значения для обхода согласия в NewPipeExtractor
+            cookiesToAdd.add("SOCS=CAI")
+        }
+
+        if (cookiesToAdd.isNotEmpty()) {
+            val bypassCookieString = cookiesToAdd.joinToString("; ")
             connection.setRequestProperty(
                 "Cookie",
-                if (existingCookie.isEmpty()) bypassCookie else "$existingCookie; $bypassCookie"
+                if (existingCookie.isEmpty()) bypassCookieString else "$existingCookie; $bypassCookieString"
             )
         }
 
-        // 5. Локализация (чтобы не было региональных редиректов)
+        // 5. Локализация для стабильного ответа без региональных редиректов
         connection.setRequestProperty("Accept-Language", "en-US,en;q=0.9")
 
-        // 6. КРИТИЧНО: Правильная отправка тела запроса (Payload) для POST/PUT
-        // Без этого внутренние API запросы YouTube (youtubei/v1) будут возвращать ошибку 400
+        // 6. Корректная отправка payloads для POST/PUT запросов (Innertube API)
         if (request.httpMethod() == "POST" || request.httpMethod() == "PUT") {
             val data = request.dataToSend()
             if (data != null) {
@@ -65,15 +73,13 @@ class NewPipeDownloader private constructor() : Downloader() {
         val responseCode = connection.responseCode
         val responseMessage = connection.responseMessage
 
-        // Получаем поток данных в зависимости от успешности ответа
         var inputStream = if (responseCode in 200..299) connection.inputStream else connection.errorStream
 
-        // 7. Распаковываем GZIP на лету
+        // 7. Распаковка GZIP
         if ("gzip".equals(connection.contentEncoding, ignoreCase = true) && inputStream != null) {
             inputStream = GZIPInputStream(inputStream)
         }
 
-        // Читаем чистый раскодированный текст (HTML или JSON)
         val responseBody = inputStream?.bufferedReader()?.use { it.readText() } ?: ""
 
         val responseHeaders = mutableMapOf<String, List<String>>()
